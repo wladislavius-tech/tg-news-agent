@@ -1,0 +1,54 @@
+name: Пост новин у Telegram
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # кожні 30 хв; скрипт сам вирішує, чи час постити
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Ігнорувати розклад і запостити зараз"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: news-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Запустити агента
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: ${{ secrets.TELEGRAM_CHANNEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python -m newsbot.main --force
+          else
+            python -m newsbot.main
+          fi
+
+      - name: Зберегти стан (state.json)
+        run: |
+          if ! git diff --quiet state.json 2>/dev/null || [ -n "$(git status --porcelain state.json)" ]; then
+            git config user.name "news-bot"
+            git config user.email "actions@users.noreply.github.com"
+            git add state.json
+            git commit -m "chore: оновити стан постингу [skip ci]"
+            git pull --rebase origin ${{ github.ref_name }}
+            git push
+          fi
