@@ -76,6 +76,7 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     want_album = item.related_count >= config.ALBUM_THRESHOLD
     tries = config.ALBUM_SOURCE_TRIES if want_album else config.IMAGE_SOURCE_TRIES
     images: list[bytes] = []
+    first_image_url = ""  # для колажу вечірнього дайджесту
     seen_hashes: set[str] = set()
     for i, src in enumerate(sources[:tries]):
         m = meta if i == 0 else ukrnet.fetch_article_meta(src.url)
@@ -85,6 +86,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             if digest not in seen_hashes:
                 seen_hashes.add(digest)
                 images.append(img)
+                if not first_image_url:
+                    first_image_url = m.image_url
         if images and not want_album:
             break
         if len(images) >= config.ALBUM_MAX_PHOTOS:
@@ -102,8 +105,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
 
     caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration, **src_kwargs)
     if len(images) > 1:
-        return caption, {"album": images}
-    return caption, {"image": images[0]}
+        return caption, {"album": images, "_img_url": first_image_url}
+    return caption, {"image": images[0], "_img_url": first_image_url}
 
 
 WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
@@ -182,7 +185,15 @@ def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
     ):
         return
     caption = llm.compose_digest(daily["titles"], now.strftime("%d.%m.%Y"))
-    image = cover.make_cover("Головне за день", now)
+    # Колаж з фото подій дня; якщо фото замало — звичайна обкладинка
+    blobs: list[bytes] = []
+    for url in (daily.get("image_urls") or [])[-8:]:
+        blob = ukrnet.download_image(url)
+        if blob:
+            blobs.append(blob)
+        if len(blobs) == 4:
+            break
+    image = cover.make_digest_collage(blobs, now) or cover.make_cover("Головне за день", now)
     if dry_run:
         print("=" * 60)
         print(caption)
@@ -229,6 +240,30 @@ def run(dry_run: bool, force: bool) -> None:
         log.info("Нових новин, вартих поста, немає")
         return
 
+    # Семантичний фільтр дублів: перефразовані заголовки тієї ж події.
+    # Для контексту беремо заголовки інших видань з кластера новини.
+    recent = state["posted_titles"][-15:]
+    filtered = []
+    for cand in candidates[:2]:
+        alt_titles: list[str] = []
+        if recent and not cand.cluster_id.startswith("tg:"):
+            try:
+                alt_titles = [s.title for s in ukrnet.fetch_cluster_sources(cand.url)]
+            except Exception:  # noqa: BLE001
+                pass
+        if llm.is_same_event(cand.title, alt_titles, recent):
+            log.info("Семантичний дубль, пропускаю назавжди: %r", cand.title)
+            state["posted_ids"].append(cand.cluster_id)
+            state["posted_titles"].append(cand.title)
+            if not dry_run:
+                state_mod.save(state)
+        else:
+            filtered.append(cand)
+    candidates = filtered + candidates[2:]
+    if not candidates:
+        log.info("Все нове — дублі вже опублікованого")
+        return
+
     top = candidates[0]
     elapsed = state_mod.minutes_since_last_post(state, now)
     if not force and not allowed_to_post(now, elapsed, top.related_count):
@@ -268,6 +303,7 @@ def run(dry_run: bool, force: bool) -> None:
         except Exception:
             log.exception("Не вдалося зібрати пост, пропускаю")
             continue
+        img_url = media.pop("_img_url", "")
         if dry_run:
             print("=" * 60)
             print(caption)
@@ -282,7 +318,7 @@ def run(dry_run: bool, force: bool) -> None:
         else:
             tg.send_post(caption, **media)
             log.info("Опубліковано ✔")
-        state_mod.remember_post(state, item.cluster_id, item.title, now)
+        state_mod.remember_post(state, item.cluster_id, item.title, now, image_url=img_url)
         if not dry_run:
             state_mod.save(state)
 

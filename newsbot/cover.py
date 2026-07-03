@@ -132,6 +132,54 @@ def make_morning_card(
     return buf.getvalue()
 
 
+def make_digest_collage(image_blobs: list[bytes], when: datetime) -> bytes | None:
+    """Обкладинка вечірнього дайджесту: мозаїка з фото подій дня + заголовок.
+
+    None — якщо придатних фото менше двох (тоді береться звичайна обкладинка).
+    """
+    from PIL import ImageOps
+
+    imgs = []
+    for blob in image_blobs:
+        try:
+            imgs.append(Image.open(io.BytesIO(blob)).convert("RGB"))
+        except Exception:  # noqa: BLE001
+            continue
+        if len(imgs) == 4:
+            break
+    if len(imgs) < 2:
+        return None
+
+    Wc, Hc = 1280, 720
+    canvas = Image.new("RGB", (Wc, Hc), (11, 21, 48))
+    if len(imgs) == 2:
+        cells = [(0, 0, 640, 720), (640, 0, 640, 720)]
+    elif len(imgs) == 3:
+        cells = [(0, 0, 640, 720), (640, 0, 640, 360), (640, 360, 640, 360)]
+    else:
+        cells = [(0, 0, 640, 360), (640, 0, 640, 360), (0, 360, 640, 360), (640, 360, 640, 360)]
+    for img, (x, y, w, h) in zip(imgs, cells):
+        canvas.paste(ImageOps.fit(img, (w, h)), (x, y))
+
+    # Затемнення, щоб текст читався поверх мозаїки
+    canvas = canvas.convert("RGBA")
+    shade = Image.new("RGBA", (Wc, Hc), (8, 14, 35, 150))
+    canvas = Image.alpha_composite(canvas, shade).convert("RGB")
+
+    draw = ImageDraw.Draw(canvas)
+    draw.rectangle([0, 0, Wc, 10], fill=(255, 197, 0))
+    draw.rectangle([0, Hc - 10, Wc, Hc], fill=(255, 197, 0))
+    header = f"НОВИНИ УКРАЇНИ  •  {when.strftime('%d.%m.%Y')}"
+    draw.text((Wc // 2, 150), header, font=_font(40), fill=(255, 197, 0), anchor="mm")
+    title_font = _font(110)
+    draw.text((Wc // 2 + 3, Hc // 2 + 3), "ГОЛОВНЕ ЗА ДЕНЬ", font=title_font, fill=(0, 0, 0), anchor="mm")
+    draw.text((Wc // 2, Hc // 2), "ГОЛОВНЕ ЗА ДЕНЬ", font=title_font, fill=(255, 255, 255), anchor="mm")
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
 def make_cover(title: str, when: datetime) -> bytes:
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)

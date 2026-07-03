@@ -62,15 +62,21 @@ def is_duplicate(state: dict, cluster_id: str, title: str) -> bool:
     return False
 
 
-def remember_post(state: dict, cluster_id: str, title: str, now: datetime) -> None:
+def remember_post(
+    state: dict, cluster_id: str, title: str, now: datetime, image_url: str = ""
+) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
     state["last_post_at"] = now.isoformat()
-    # Список заголовків дня — для вечірнього дайджесту
+    # Заголовки і фото дня — для вечірнього дайджесту та його колажу
     today = now.date().isoformat()
     daily = state["daily"]
     if daily.get("date") != today:
         daily["date"] = today
         daily["titles"] = []
+        daily["image_urls"] = []
     daily["titles"].append(title)
     daily["titles"] = daily["titles"][-60:]
+    if image_url:
+        daily.setdefault("image_urls", []).append(image_url)
+        daily["image_urls"] = daily["image_urls"][-12:]
