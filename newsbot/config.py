@@ -89,6 +89,21 @@ MAX_AGE_HOURS = 3
 MAX_POSTS_DAY = 2
 MAX_POSTS_NIGHT = 1
 
+# --- Тренди з великих Telegram-каналів (резервне джерело новин) ---
+# Використовуються, лише коли Укрнет не дав гідних кандидатів.
+TREND_CHANNELS = [
+    "truexanewsua",   # Труха Україна
+    "lachentyt",      # Лачен пише
+    "insiderUKR",     # Інсайдер UA
+    "operativnoZSU",  # Оперативний ЗСУ
+    "suspilnenews",   # Суспільне Новини
+    "ukrpravda_news", # Українська правда
+    "unian",          # УНІАН
+]
+TREND_MIN_VIEWS = 30_000    # мінімум переглядів, щоб пост вважався "гарячим"
+TREND_MAX_AGE_HOURS = 3     # не старіші за стільки годин
+TREND_MIN_TEXT = 80         # мінімальна довжина тексту (відсіює фото без контексту)
+
 # --- Стан ---
 STATE_FILE = ROOT / "state.json"
 MAX_REMEMBERED_IDS = 500

@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, cover, genimage, llm, state as state_mod, tg, ukrnet
+from . import config, cover, genimage, llm, state as state_mod, tg, tgtrends, ukrnet
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -48,19 +48,29 @@ def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) ->
 
 def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     """Повертає (підпис, медіа): відео першоджерела → YouTube → фото → обкладинка."""
-    sources = ukrnet.fetch_cluster_sources(item.url)
-    meta = ukrnet.ArticleMeta()
-    if sources:
-        meta = ukrnet.fetch_article_meta(sources[0].url)
+    src_kwargs: dict = {}
+    if item.cluster_id.startswith("tg:"):
+        # Тренд з Telegram-каналу: сторінка поста t.me має og:image та og:description
+        channel = item.cluster_id.removeprefix("tg:").split("/")[0]
+        sources = [ukrnet.SourceArticle(item.title, item.url, f"t.me/{channel}")]
+        meta = ukrnet.fetch_article_meta(item.url)
+        meta.description = tgtrends.clean_text(meta.description)
+        src_kwargs = {"source_url": item.url, "source_name": f"@{channel}",
+                      "require_ai": True}
+    else:
+        sources = ukrnet.fetch_cluster_sources(item.url)
+        meta = ukrnet.ArticleMeta()
+        if sources:
+            meta = ukrnet.fetch_article_meta(sources[0].url)
 
     video = ukrnet.download_video(meta.video_url)
     if video:
         credit = meta.site_name or (sources[0].domain if sources else "")
-        caption = llm.compose_post(item, sources, meta, video_credit=credit)
+        caption = llm.compose_post(item, sources, meta, video_credit=credit, **src_kwargs)
         return caption, {"video": video}
 
     if meta.youtube_url:
-        caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url)
+        caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url, **src_kwargs)
         return caption, {"youtube_url": meta.youtube_url}
 
     # Фото: збираємо якісні знімки з кількох джерел. Для великих подій — до 3 фото
@@ -92,7 +102,7 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     if not images:
         images = [cover.make_cover(item.title, now)]
 
-    caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration)
+    caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration, **src_kwargs)
     if len(images) > 1:
         return caption, {"album": images}
     return caption, {"image": images[0]}
@@ -202,6 +212,17 @@ def run(dry_run: bool, force: bool) -> None:
     items = ukrnet.fetch_feed(now)
     log.info("Стрічка: %d новин", len(items))
     candidates = pick_candidates(items, state, now)
+    if not candidates:
+        # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст)
+        trends = [
+            tgtrends.to_feed_item(p) for p in tgtrends.fetch_trends(now)
+        ]
+        candidates = [
+            it for it in trends
+            if not state_mod.is_duplicate(state, it.cluster_id, it.title)
+        ]
+        if candidates:
+            log.info("Укрнет порожній, беру тренд із Telegram: %r", candidates[0].title)
     if not candidates:
         log.info("Нових новин, вартих поста, немає")
         return

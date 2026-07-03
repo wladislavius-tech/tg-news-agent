@@ -65,17 +65,25 @@ def compose_post(
     video_credit: str = "",
     youtube_url: str = "",
     ai_illustration: bool = False,
+    source_url: str = "",
+    source_name: str = "",
+    require_ai: bool = False,
 ) -> str:
     """Повертає готовий підпис поста (HTML для Telegram).
 
     video_credit — автор/видання, чиє відео постимо (обов'язкове зазначення авторства).
     youtube_url — YouTube-відео новини; додається посиланням у пост.
     ai_illustration — картинка згенерована ШІ; чесно позначаємо це у пості.
+    source_url/source_name — явне посилання на джерело (для трендів з TG-каналів).
     """
     generated = _gemini_generate(item, sources, meta) if config.GEMINI_API_KEY else None
     if generated:
         headline, body = generated
     else:
+        if require_ai:
+            # Тренди з TG-каналів без AI-переписування не публікуємо:
+            # дослівна копія чужого поста — плагіат і ризик скарг
+            raise RuntimeError("AI недоступний, тренд пропущено (без переписування не постимо)")
         headline = "📰 " + item.title
         body = meta.description
 
@@ -88,6 +96,10 @@ def compose_post(
         parts.append(f'▶️ <a href="{html.escape(youtube_url, quote=True)}">Дивитися відео</a>')
 
     footer_lines = []
+    if source_url:
+        footer_lines.append(
+            f'🔎 <a href="{html.escape(source_url, quote=True)}">Джерело: {html.escape(source_name or "Telegram")}</a>'
+        )
     if video_credit:
         footer_lines.append(f"🎥 Відео: {html.escape(video_credit)}")
     if ai_illustration:
