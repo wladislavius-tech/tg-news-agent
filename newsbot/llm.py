@@ -38,11 +38,13 @@ def compose_post(
     meta: ArticleMeta,
     video_credit: str = "",
     youtube_url: str = "",
+    ai_illustration: bool = False,
 ) -> str:
     """Повертає готовий підпис поста (HTML для Telegram).
 
     video_credit — автор/видання, чиє відео постимо (обов'язкове зазначення авторства).
     youtube_url — YouTube-відео новини; додається посиланням у пост.
+    ai_illustration — картинка згенерована ШІ; чесно позначаємо це у пості.
     """
     generated = _gemini_generate(item, sources, meta) if config.GEMINI_API_KEY else None
     if generated:
@@ -62,6 +64,8 @@ def compose_post(
         credit = f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>'
         if video_credit:
             credit += f"\n🎥 Відео: {html.escape(video_credit)}"
+        if ai_illustration:
+            credit += "\n🎨 Ілюстрація: згенерована ШІ"
         parts.append(credit)
     if hashtags:
         parts.append(html.escape(" ".join(hashtags)))

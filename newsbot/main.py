@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, cover, llm, state as state_mod, tg, ukrnet
+from . import config, cover, genimage, llm, state as state_mod, tg, ukrnet
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -60,7 +60,6 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url)
         return caption, {"youtube_url": meta.youtube_url}
 
-    caption = llm.compose_post(item, sources, meta)
     # Фото: перебираємо кілька джерел кластера, поки не знайдемо якісне
     image = ukrnet.download_image(meta.image_url)
     for src in sources[1:config.IMAGE_SOURCE_TRIES]:
@@ -68,8 +67,14 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             break
         alt_meta = ukrnet.fetch_article_meta(src.url)
         image = ukrnet.download_image(alt_meta.image_url)
+    # Немає якісного фото — генеруємо AI-ілюстрацію
+    ai_illustration = False
+    if image is None:
+        image = genimage.generate_illustration(item.title, meta.description)
+        ai_illustration = image is not None
     if image is None:
         image = cover.make_cover(item.title, now)
+    caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration)
     return caption, {"image": image}
 
 
