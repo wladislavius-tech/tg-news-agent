@@ -24,6 +24,8 @@ _load_dotenv()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+# Особистий chat_id власника: сюди бот шле сповіщення про збої (необов'язково)
+TELEGRAM_ADMIN_CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT", "")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
@@ -62,6 +64,11 @@ JITTER_MAX_SECONDS = 8 * 60
 # Підпис каналу в кінці поста
 CHANNEL_NAME = "Українські новини"
 CHANNEL_LINK = "https://t.me/News_Ukraine_world_war"
+
+# Вечірній дайджест "Головне за день"
+DIGEST_HOUR = 21          # київська година публікації
+DIGEST_MIN_ITEMS = 5      # мінімум постів за день, щоб дайджест мав сенс
+DIGEST_MAX_LINES = 8
 # Мінімум пов'язаних публікацій, щоб новина взагалі розглядалась
 MIN_RELATED = 2
 # Не постити новини, старші за стільки годин

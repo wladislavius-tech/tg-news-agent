@@ -12,8 +12,15 @@ _WORD_RE = re.compile(r"[а-яіїєґa-z0-9']+", re.IGNORECASE)
 
 def load() -> dict:
     if config.STATE_FILE.exists():
-        return json.loads(config.STATE_FILE.read_text(encoding="utf-8"))
-    return {"posted_ids": [], "posted_titles": [], "last_post_at": None}
+        state = json.loads(config.STATE_FILE.read_text(encoding="utf-8"))
+    else:
+        state = {}
+    state.setdefault("posted_ids", [])
+    state.setdefault("posted_titles", [])
+    state.setdefault("last_post_at", None)
+    state.setdefault("daily", {"date": "", "titles": []})
+    state.setdefault("digest_date", "")
+    return state
 
 
 def save(state: dict) -> None:
@@ -56,3 +63,11 @@ def remember_post(state: dict, cluster_id: str, title: str, now: datetime) -> No
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
     state["last_post_at"] = now.isoformat()
+    # Список заголовків дня — для вечірнього дайджесту
+    today = now.date().isoformat()
+    daily = state["daily"]
+    if daily.get("date") != today:
+        daily["date"] = today
+        daily["titles"] = []
+    daily["titles"].append(title)
+    daily["titles"] = daily["titles"][-60:]

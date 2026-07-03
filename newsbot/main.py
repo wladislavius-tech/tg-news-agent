@@ -80,6 +80,31 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     return caption, {"image": image}
 
 
+def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
+    """О 21:xx публікує «Головне за день», якщо сьогодні було досить постів."""
+    today = now.date().isoformat()
+    daily = state.get("daily") or {}
+    if (
+        now.hour != config.DIGEST_HOUR
+        or state.get("digest_date") == today
+        or daily.get("date") != today
+        or len(daily.get("titles", [])) < config.DIGEST_MIN_ITEMS
+    ):
+        return
+    caption = llm.compose_digest(daily["titles"], now.strftime("%d.%m.%Y"))
+    image = cover.make_cover("Головне за день", now)
+    if dry_run:
+        print("=" * 60)
+        print(caption)
+        print("[дайджест: обкладинка]")
+    else:
+        tg.send_post(caption, image=image)
+        log.info("Дайджест опубліковано ✔")
+        state["digest_date"] = today
+        state["last_post_at"] = now.isoformat()
+        state_mod.save(state)
+
+
 def run(dry_run: bool, force: bool) -> None:
     if not dry_run and (not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHANNEL):
         sys.exit("Не задано TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL (див. .env.example)")
@@ -87,6 +112,8 @@ def run(dry_run: bool, force: bool) -> None:
     now = datetime.now(KYIV)
     state = state_mod.load()
     first_run = not state["posted_ids"] and not state.get("last_post_at")
+
+    maybe_post_digest(state, now, dry_run)
 
     items = ukrnet.fetch_feed(now)
     log.info("Стрічка: %d новин", len(items))
@@ -161,7 +188,13 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-    run(dry_run=args.dry_run, force=args.force)
+    try:
+        run(dry_run=args.dry_run, force=args.force)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        tg.send_admin(f"⚠️ Новинний агент впав: {type(exc).__name__}: {exc}")
+        raise
 
 
 if __name__ == "__main__":

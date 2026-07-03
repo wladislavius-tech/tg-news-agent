@@ -88,11 +88,6 @@ def compose_post(
         parts.append(f'▶️ <a href="{html.escape(youtube_url, quote=True)}">Дивитися відео</a>')
 
     footer_lines = []
-    if sources:
-        src = sources[0]
-        footer_lines.append(
-            f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>'
-        )
     if video_credit:
         footer_lines.append(f"🎥 Відео: {html.escape(video_credit)}")
     if ai_illustration:
@@ -108,6 +103,59 @@ def compose_post(
         parts[1] = body_html[: max(0, len(body_html) - overflow - 1)].rstrip() + "…"
         caption = "\n\n".join(parts)
     return caption
+
+
+_DIGEST_PROMPT = """Ти — редактор українського Telegram-каналу новин. Ось заголовки
+постів за сьогодні. Обери {max_lines} НАЙВАЖЛИВІШИХ різних подій (без дублів однієї
+події) і стисни кожну в один рядок до 90 символів: почни з доречного емодзі, далі суть.
+Порядок — від найважливішої. Відповідай строго JSON: {{"lines": ["...", "..."]}}
+
+Заголовки:
+{titles}"""
+
+
+def compose_digest(titles: list[str], now_str: str) -> str:
+    """Вечірній дайджест «Головне за день»."""
+    lines: list[str] | None = None
+    if config.GEMINI_API_KEY:
+        prompt = _DIGEST_PROMPT.format(
+            max_lines=config.DIGEST_MAX_LINES,
+            titles="\n".join(f"- {t}" for t in titles),
+        )
+        data = _gemini_json(prompt)
+        if data and isinstance(data.get("lines"), list):
+            lines = [str(l).strip() for l in data["lines"] if str(l).strip()]
+    if not lines:
+        lines = ["• " + t[:90] for t in titles[: config.DIGEST_MAX_LINES]]
+
+    body = "\n\n".join(html.escape(l) for l in lines[: config.DIGEST_MAX_LINES])
+    footer = f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
+    return f"<b>🌙 Головне за {now_str}</b>\n\n{body}\n\n{footer}"
+
+
+def _gemini_json(prompt: str) -> dict | None:
+    """Один JSON-запит до Gemini з ретраєм; None при збої."""
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{config.GEMINI_MODEL}:generateContent"
+    )
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 4000,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
+    }
+    for _attempt in range(2):
+        try:
+            resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=60)
+            resp.raise_for_status()
+            return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
+        except Exception:  # noqa: BLE001
+            continue
+    return None
 
 
 def _gemini_generate(

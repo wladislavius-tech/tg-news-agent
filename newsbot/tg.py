@@ -23,6 +23,19 @@ def _call(method: str, *, data: dict, files: dict | None = None) -> dict:
     return payload["result"]
 
 
+def send_admin(text: str) -> None:
+    """Сповіщення власнику в особисті. Збій сповіщення не має валити агента."""
+    if not config.TELEGRAM_ADMIN_CHAT:
+        return
+    try:
+        _call(
+            "sendMessage",
+            data={"chat_id": config.TELEGRAM_ADMIN_CHAT, "text": text[:4000]},
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def send_post(
     caption: str,
     image: bytes | None = None,
