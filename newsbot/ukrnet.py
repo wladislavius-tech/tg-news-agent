@@ -170,9 +170,15 @@ def _unescape(text: str) -> str:
     return html_mod.unescape(text).strip()
 
 
+_PLACEHOLDER_URL_RE = re.compile(
+    r"logo|placeholder|default|no[-_]?(?:photo|image)|noimage|stub|favicon|avatar",
+    re.IGNORECASE,
+)
+
+
 def download_image(url: str) -> bytes | None:
-    """Завантажує картинку статті; None — якщо бита, замала або неякісна."""
-    if not url:
+    """Завантажує картинку статті; None — якщо бита, замала, неякісна або заглушка."""
+    if not url or _PLACEHOLDER_URL_RE.search(url):
         return None
     try:
         resp = _get(url)
@@ -187,7 +193,11 @@ def download_image(url: str) -> bytes | None:
 
 
 def _image_quality_ok(data: bytes) -> bool:
-    """Відсіює замалі та дивно обрізані картинки (кадри з відео, банери)."""
+    """Відсіює замалі картинки, кадри-банери та логотипи-заглушки.
+
+    Логотип на рівному тлі має мало відтінків і домінантний колір;
+    справжнє фото — тисячі відтінків.
+    """
     try:
         from io import BytesIO
 
@@ -200,7 +210,18 @@ def _image_quality_ok(data: bytes) -> bool:
     if w < config.MIN_IMAGE_WIDTH or h < config.MIN_IMAGE_HEIGHT:
         return False
     aspect = w / h
-    return 0.5 <= aspect <= 2.6
+    if not 0.5 <= aspect <= 2.6:
+        return False
+
+    thumb = img.convert("RGB").resize((64, 64))
+    colors = thumb.getcolors(64 * 64) or []
+    unique = len(colors)
+    dominant_share = max((cnt for cnt, _ in colors), default=0) / (64 * 64)
+    if unique < 200:  # плоска графіка/логотип
+        return False
+    if dominant_share > 0.45 and unique < 1200:  # логотип на рівному тлі
+        return False
+    return True
 
 
 def download_video(url: str) -> bytes | None:

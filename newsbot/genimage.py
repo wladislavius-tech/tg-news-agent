@@ -15,15 +15,18 @@ from . import config
 log = logging.getLogger(__name__)
 
 _STYLE = (
-    "editorial news illustration, symbolic, modern digital art, muted colors, "
-    "dramatic lighting, no text, no letters, no logos, no watermarks"
+    "masterful editorial illustration for a news magazine cover, cinematic wide "
+    "composition with foreground and background depth, dramatic volumetric lighting, "
+    "rich detailed environment, atmospheric mood, high detail digital painting, "
+    "no text, no letters, no logos, no watermarks"
 )
 _SAFETY = ", no graphic violence, no blood, no realistic faces of real people"
 
-_PROMPT_CRAFT = """Переклади суть новини в короткий (до 20 слів) англійський опис
-символічної ілюстрації для неї. Без імен реальних людей, без тексту на зображенні,
-без жорстоких сцен — лише символи та атмосфера (прапори, силуети, техніка, будівлі,
-погода, предмети). Відповідай ЛИШЕ описом англійською, без пояснень.
+_PROMPT_CRAFT = """Опиши англійською (30–45 слів) детальну сцену-ілюстрацію для новини.
+Це має бути насичена композиція, як обкладинка журналу: головний об'єкт + оточення +
+атмосфера. Вкажи: місце дії, ключові об'єкти (техніка, будівлі, прапори, предмети),
+погоду/освітлення, настрій, кольорову гаму. Без імен реальних людей, без тексту на
+зображенні, без жорстоких сцен. Відповідай ЛИШЕ описом англійською, без пояснень.
 
 Новина: {title}
 {description}"""
@@ -34,8 +37,8 @@ def generate_illustration(title: str, description: str) -> bytes | None:
     prompt = f"{scene}, {_STYLE}{_SAFETY}"
     url = (
         "https://image.pollinations.ai/prompt/"
-        + urllib.parse.quote(prompt[:400])
-        + "?width=1280&height=720&nologo=true"
+        + urllib.parse.quote(prompt[:500])
+        + "?width=1280&height=720&nologo=true&model=flux&enhance=true"
     )
     try:
         resp = requests.get(
@@ -72,6 +75,6 @@ def _craft_scene_prompt(title: str, description: str) -> str | None:
         resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=45)
         resp.raise_for_status()
         text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return text.splitlines()[0][:250] if text else None
+        return " ".join(text.split())[:400] if text else None
     except Exception:
         return None
