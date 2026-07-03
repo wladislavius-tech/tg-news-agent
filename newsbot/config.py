@@ -28,6 +28,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 TELEGRAM_ADMIN_CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT", "")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# Резервна модель: у кожної моделі своя квота безкоштовного тарифу
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.0-flash")
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"
@@ -72,6 +74,8 @@ DIGEST_MAX_LINES = 8
 
 # Ранковий дайджест-картка (курси, день війни, пам'ятні дні)
 MORNING_HOUR = 7
+# Гороскоп на день
+HOROSCOPE_HOUR = 9
 
 # Альбом із кількох фото — для великих подій
 ALBUM_THRESHOLD = 50      # від скількох публікацій шукати кілька фото

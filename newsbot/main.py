@@ -140,6 +140,28 @@ def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
         state_mod.save(state)
 
 
+def maybe_post_horoscope(state: dict, now: datetime, dry_run: bool) -> None:
+    """О 09:xx публікує гороскоп на день (текстовим постом)."""
+    today = now.date().isoformat()
+    if now.hour != config.HOROSCOPE_HOUR or state.get("horoscope_date") == today:
+        return
+    date_str = f"{now.day} {cover._MONTHS_GEN[now.month - 1]}"
+    caption = llm.compose_horoscope(date_str)
+    if not caption:
+        log.warning("Гороскоп не згенерувався, спробую наступного запуску")
+        return
+    if dry_run:
+        print("=" * 60)
+        print(caption)
+        print("[гороскоп: текстовий пост]")
+    else:
+        tg.send_post(caption)
+        log.info("Гороскоп опубліковано ✔")
+        state["horoscope_date"] = today
+        state["last_post_at"] = now.isoformat()
+        state_mod.save(state)
+
+
 def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
     """О 21:xx публікує «Головне за день», якщо сьогодні було досить постів."""
     today = now.date().isoformat()
@@ -174,6 +196,7 @@ def run(dry_run: bool, force: bool) -> None:
     first_run = not state["posted_ids"] and not state.get("last_post_at")
 
     maybe_post_morning(state, now, dry_run)
+    maybe_post_horoscope(state, now, dry_run)
     maybe_post_digest(state, now, dry_run)
 
     items = ukrnet.fetch_feed(now)

@@ -61,22 +61,13 @@ def generate_illustration(title: str, description: str) -> bytes | None:
 def _craft_scene_prompt(title: str, description: str) -> str | None:
     if not config.GEMINI_API_KEY:
         return None
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{config.GEMINI_MODEL}:generateContent"
+    from . import llm
+
+    data = llm._gemini_json(
+        _PROMPT_CRAFT.format(title=title, description=description or "")
+        + '\n\nВідповідай строго JSON: {"scene": "..."}',
+        temperature=0.6,
     )
-    payload = {
-        "contents": [{
-            "parts": [{
-                "text": _PROMPT_CRAFT.format(title=title, description=description or "")
-            }]
-        }],
-        "generationConfig": {"temperature": 0.6, "maxOutputTokens": 500},
-    }
-    try:
-        resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=45)
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return " ".join(text.split())[:400] if text else None
-    except Exception:
+    if not data or not data.get("scene"):
         return None
+    return " ".join(str(data["scene"]).split())[:400]

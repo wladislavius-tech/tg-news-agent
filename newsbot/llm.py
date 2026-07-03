@@ -120,6 +120,39 @@ def fetch_observances(day: int, month_gen: str) -> list[str]:
     return [str(d).strip() for d in data["days"] if str(d).strip()][:5]
 
 
+_ZODIAC = [
+    "♈ Овен", "♉ Телець", "♊ Близнюки", "♋ Рак", "♌ Лев", "♍ Діва",
+    "♎ Терези", "♏ Скорпіон", "♐ Стрілець", "♑ Козоріг", "♒ Водолій", "♓ Риби",
+]
+
+
+def compose_horoscope(date_str: str) -> str | None:
+    """Гороскоп на день для всіх 12 знаків. None — якщо Gemini недоступний."""
+    if not config.GEMINI_API_KEY:
+        return None
+    signs = ", ".join(z.split()[1] for z in _ZODIAC)
+    data = _gemini_json(
+        f"Напиши легкий доброзичливий гороскоп на {date_str} для 12 знаків зодіаку "
+        f"({signs}). Для КОЖНОГО знака — одне жваве речення до 110 символів українською: "
+        f"порада або настрій дня (робота, стосунки, гроші, енергія). Без песимізму й "
+        f"страшилок, можна з гумором. Відповідай строго JSON: "
+        f'{{"signs": ["текст для Овна", "текст для Тельця", ...]}} — рівно 12 рядків '
+        f"у порядку знаків вище, БЕЗ назв знаків у тексті."
+    )
+    if not data or not isinstance(data.get("signs"), list) or len(data["signs"]) < 12:
+        return None
+    lines = [
+        f"<b>{_ZODIAC[i]}</b> — {html.escape(str(t).strip().rstrip('.'))}."
+        for i, t in enumerate(data["signs"][:12])
+    ]
+    footer = f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
+    return (
+        f"<b>🔮 Гороскоп на сьогодні, {date_str}</b>\n\n"
+        + "\n\n".join(lines)
+        + f"\n\n{footer}"
+    )
+
+
 _DIGEST_PROMPT = """Ти — редактор українського Telegram-каналу новин. Ось заголовки
 постів за сьогодні. Обери {max_lines} НАЙВАЖЛИВІШИХ різних подій (без дублів однієї
 події) і стисни кожну в один рядок до 90 символів: почни з доречного емодзі, далі суть.
@@ -148,27 +181,24 @@ def compose_digest(titles: list[str], now_str: str) -> str:
     return f"<b>🌙 Головне за {now_str}</b>\n\n{body}\n\n{footer}"
 
 
-def _gemini_json(prompt: str) -> dict | None:
-    """Один JSON-запит до Gemini з ретраєм; None при збої."""
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{config.GEMINI_MODEL}:generateContent"
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.4,
+def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до Gemini: основна модель, при збої/квоті — резервна."""
+    for model in (config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL):
+        gen_cfg: dict = {
+            "temperature": temperature,
             "maxOutputTokens": 4000,
             "responseMimeType": "application/json",
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    for _attempt in range(2):
+        }
+        if "2.5" in model:  # thinkingConfig підтримують лише 2.5-моделі
+            gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
         try:
             resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=60)
             resp.raise_for_status()
             return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Gemini %s: %s", model, exc)
             continue
     return None
 
@@ -182,39 +212,14 @@ def _gemini_generate(
         description=meta.description or "немає",
         alt_titles=alt_titles,
     )
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{config.GEMINI_MODEL}:generateContent"
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.6,
-            "maxOutputTokens": 4000,
-            "responseMimeType": "application/json",
-            # без "роздумів": короткому посту вони не потрібні, а токени з'їдають
-            "thinkingConfig": {"thinkingBudget": 0},
-        },
-    }
-    last_exc: Exception | None = None
-    for _attempt in range(2):
-        try:
-            resp = requests.post(
-                url,
-                params={"key": config.GEMINI_API_KEY},
-                json=payload,
-                timeout=60,
-            )
-            resp.raise_for_status()
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            data = json.loads(text)
-            headline = str(data["headline"]).strip()
-            paragraphs = [str(p).strip() for p in data.get("paragraphs", []) if str(p).strip()]
-            body = "\n\n".join(paragraphs)
-            if not headline or not body:
-                raise ValueError("порожня відповідь")
-            return headline, body
-        except Exception as exc:  # noqa: BLE001 — будь-який збій AI не має зупиняти постинг
-            last_exc = exc
-    log.warning("Gemini недоступний (%s), використовую простий формат поста", last_exc)
-    return None
+    data = _gemini_json(prompt, temperature=0.6)
+    try:
+        headline = str(data["headline"]).strip()
+        paragraphs = [str(p).strip() for p in data.get("paragraphs", []) if str(p).strip()]
+        body = "\n\n".join(paragraphs)
+        if not headline or not body:
+            raise ValueError("порожня відповідь")
+        return headline, body
+    except Exception:  # noqa: BLE001 — будь-який збій AI не має зупиняти постинг
+        log.warning("Gemini недоступний, використовую простий формат поста")
+        return None

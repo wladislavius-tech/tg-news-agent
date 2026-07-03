@@ -21,6 +21,7 @@ def load() -> dict:
     state.setdefault("daily", {"date": "", "titles": []})
     state.setdefault("digest_date", "")
     state.setdefault("morning_date", "")
+    state.setdefault("horoscope_date", "")
     state.setdefault("rates", {"date": "", "values": {}})
     return state
 
