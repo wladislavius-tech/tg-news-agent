@@ -154,10 +154,12 @@ def compose_horoscope(date_str: str) -> str | None:
     )
     if not data or not isinstance(data.get("signs"), list) or len(data["signs"]) < 12:
         return None
-    lines = [
-        f"<b>{_ZODIAC[i]}</b> — {html.escape(str(t).strip().rstrip('.'))}."
-        for i, t in enumerate(data["signs"][:12])
-    ]
+    lines = []
+    for i, t in enumerate(data["signs"][:12]):
+        text = str(t).strip().rstrip(".")
+        if not text.endswith(("!", "?", "…")):
+            text += "."
+        lines.append(f"<b>{_ZODIAC[i]}</b> — {html.escape(text)}")
     footer = f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
     return (
         f"<b>🔮 Гороскоп на сьогодні, {date_str}</b>\n\n"
