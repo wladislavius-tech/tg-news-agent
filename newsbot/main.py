@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 import sys
 import time
 from datetime import datetime, timedelta
@@ -116,10 +117,17 @@ def run(dry_run: bool, force: bool) -> None:
     if first_run:
         chosen = chosen[:1]  # перший запуск — один пост, без "зливи" старих новин
 
+    # "Живий" розклад: пости виходять не рівно о :00/:30, а з випадковим зсувом
+    if not force and not dry_run:
+        jitter = random.uniform(20, config.JITTER_MAX_SECONDS)
+        log.info("Живий розклад: чекаю %.0f хв перед публікацією", jitter / 60)
+        time.sleep(jitter)
+
     for i, item in enumerate(chosen):
         if i > 0 and not dry_run:
-            log.info("Пауза %d хв перед наступним постом", config.POSTS_GAP_SECONDS // 60)
-            time.sleep(config.POSTS_GAP_SECONDS)
+            gap = random.uniform(*config.POSTS_GAP_MINUTES) * 60
+            log.info("Пауза %.0f хв перед наступним постом", gap / 60)
+            time.sleep(gap)
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
         try:
             caption, media = build_post(item, now)

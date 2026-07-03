@@ -16,20 +16,36 @@ from .ukrnet import ArticleMeta, FeedItem, SourceArticle
 
 log = logging.getLogger(__name__)
 
-_PROMPT = """Ти — редактор українського новинного Telegram-каналу.
+_PROMPT = """Ти — редактор популярного українського Telegram-каналу новин (стиль на кшталт
+«Україна Сейчас»: живо, коротко, по-людськи, але БЕЗ вигадок і паніки).
+
 Напиши пост про новину нижче. Вимоги:
-- Українською мовою, нейтральний фактичний тон, без клікбейту та вигадок.
-- Використовуй ЛИШЕ факти з наданих матеріалів. Нічого не додумуй.
-- headline: один рядок до 80 символів, почни з 1 доречного емодзі.
-- body: 2–4 короткі речення, найважливіше — першим.
-- hashtags: 2–3 українські хештеги без пробілів, наприклад "#Україна".
+- Жива розмовна українська, без канцеляриту («росіяни вдарили», а не «було здійснено удар»).
+- Використовуй ЛИШЕ факти з наданих матеріалів. Нічого не додумуй, цифри не змінюй.
+- headline: один ударний рядок до 90 символів. Почни з 1–2 емодзі під настрій новини:
+  ⚡️ термінове/щойно, 💔 трагедія, 😨 тривожне, 🤯 шокуюче, 🔥 гаряче, ✈️/🚀/💥 атаки та ППО,
+  🇺🇦 перемоги, 💰 гроші, ⚽️ спорт, 🌦 погода, 😁 курйози. Без крапки в кінці.
+- body: 1–3 короткі речення. Найважливіші цифри, місця й імена виділи **подвійними зірочками**.
+  Пиши енергійно, наче розповідаєш другові, але тримайся фактів. Трагедії — стримано, без смайлів у тексті.
+- Жодних хештегів.
 
 Новина (заголовок агрегатора): {title}
 Опис з першоджерела: {description}
 Заголовки інших видань про цю ж подію:
 {alt_titles}
 
-Відповідай строго JSON-об'єктом: {{"headline": "...", "body": "...", "hashtags": ["#...", "#..."]}}"""
+Відповідай строго JSON-об'єктом: {{"headline": "...", "body": "..."}}"""
+
+_BOLD_RE = None  # ініціалізується у _md_bold_to_html
+
+
+def _md_bold_to_html(text: str) -> str:
+    """Екранує HTML і перетворює **текст** на <b>текст</b>."""
+    global _BOLD_RE
+    import re
+    if _BOLD_RE is None:
+        _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+    return _BOLD_RE.sub(r"<b>\1</b>", html.escape(text))
 
 
 def compose_post(
@@ -48,40 +64,45 @@ def compose_post(
     """
     generated = _gemini_generate(item, sources, meta) if config.GEMINI_API_KEY else None
     if generated:
-        headline, body, hashtags = generated
+        headline, body = generated
     else:
         headline = "📰 " + item.title
         body = meta.description
-        hashtags = ["#новини", "#Україна"]
 
-    parts = [f"<b>{html.escape(headline)}</b>"]
-    if body:
-        parts.append(html.escape(body))
+    body_html = _md_bold_to_html(body) if body else ""
+
+    parts = [f"<b>{_md_bold_to_html(headline)}</b>"]
+    if body_html:
+        parts.append(body_html)
     if youtube_url:
         parts.append(f'▶️ <a href="{html.escape(youtube_url, quote=True)}">Дивитися відео</a>')
+
+    footer_lines = []
     if sources:
         src = sources[0]
-        credit = f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>'
-        if video_credit:
-            credit += f"\n🎥 Відео: {html.escape(video_credit)}"
-        if ai_illustration:
-            credit += "\n🎨 Ілюстрація: згенерована ШІ"
-        parts.append(credit)
-    if hashtags:
-        parts.append(html.escape(" ".join(hashtags)))
+        footer_lines.append(
+            f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>'
+        )
+    if video_credit:
+        footer_lines.append(f"🎥 Відео: {html.escape(video_credit)}")
+    if ai_illustration:
+        footer_lines.append("🎨 Ілюстрація: згенерована ШІ")
+    footer_lines.append(
+        f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
+    )
+    parts.append("\n".join(footer_lines))
 
     caption = "\n\n".join(parts)
-    if len(caption) > config.CAPTION_LIMIT:
+    if len(caption) > config.CAPTION_LIMIT and body_html:
         overflow = len(caption) - config.CAPTION_LIMIT
-        body_cut = html.escape(body)[: max(0, len(html.escape(body)) - overflow - 1)].rstrip() + "…"
-        parts[1] = body_cut
+        parts[1] = body_html[: max(0, len(body_html) - overflow - 1)].rstrip() + "…"
         caption = "\n\n".join(parts)
     return caption
 
 
 def _gemini_generate(
     item: FeedItem, sources: list[SourceArticle], meta: ArticleMeta
-) -> tuple[str, str, list[str]] | None:
+) -> tuple[str, str] | None:
     alt_titles = "\n".join(f"- {s.title} ({s.domain})" for s in sources[:4]) or "- немає"
     prompt = _PROMPT.format(
         title=item.title,
@@ -112,10 +133,9 @@ def _gemini_generate(
         data = json.loads(text)
         headline = str(data["headline"]).strip()
         body = str(data["body"]).strip()
-        hashtags = [str(h).strip() for h in data.get("hashtags", []) if str(h).startswith("#")]
         if not headline or not body:
             raise ValueError("порожня відповідь")
-        return headline, body, hashtags[:3]
+        return headline, body
     except Exception as exc:  # noqa: BLE001 — будь-який збій AI не має зупиняти постинг
         log.warning("Gemini недоступний (%s), використовую простий формат поста", exc)
         return None
