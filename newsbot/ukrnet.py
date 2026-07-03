@@ -38,12 +38,26 @@ class ArticleMeta:
     source_titles: list[str] = field(default_factory=list)
 
 
-def _get(url: str) -> requests.Response:
+def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
+    """GET із запасним ходом: сайти (зокрема Укрнет) блокують IP дата-центрів,
+    тому при 403/429 HTML-сторінки перечитуємо через шлюз r.jina.ai."""
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": config.USER_AGENT, "Accept-Language": "uk"},
+            timeout=config.HTTP_TIMEOUT,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        return resp
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else 0
+        if not proxy_fallback or status not in (401, 403, 429, 451):
+            raise
     resp = requests.get(
-        url,
-        headers={"User-Agent": config.USER_AGENT, "Accept-Language": "uk"},
-        timeout=config.HTTP_TIMEOUT,
-        allow_redirects=True,
+        config.READER_PROXY + url,
+        headers={"User-Agent": config.USER_AGENT, "X-Return-Format": "html"},
+        timeout=90,
     )
     resp.raise_for_status()
     return resp
@@ -51,7 +65,7 @@ def _get(url: str) -> requests.Response:
 
 def fetch_feed(now: datetime) -> list[FeedItem]:
     """Парсить головну стрічку Укрнету. `now` — поточний київський час."""
-    html = _get(config.FEED_URL).text
+    html = _get(config.FEED_URL, proxy_fallback=True).text
     soup = BeautifulSoup(html, "html.parser")
     items: list[FeedItem] = []
     for section in soup.select("section.im"):
@@ -88,7 +102,7 @@ def fetch_feed(now: datetime) -> list[FeedItem]:
 
 def fetch_cluster_sources(cluster_url: str) -> list[SourceArticle]:
     """Повертає статті-першоджерела з сторінки кластера (найсвіжіші першими)."""
-    html = _get(cluster_url).text
+    html = _get(cluster_url, proxy_fallback=True).text
     soup = BeautifulSoup(html, "html.parser")
     sources: list[SourceArticle] = []
     seen_domains: set[str] = set()
@@ -125,7 +139,7 @@ def fetch_article_meta(article_url: str) -> ArticleMeta:
     """Дістає og:image, og:description, og:video та YouTube-вставки з першоджерела."""
     meta = ArticleMeta()
     try:
-        html = _get(article_url).text[:300_000]
+        html = _get(article_url, proxy_fallback=True).text[:300_000]
     except Exception:
         return meta
     found: dict[str, str] = {}

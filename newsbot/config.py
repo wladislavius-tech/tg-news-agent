@@ -29,6 +29,8 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"
+# Шлюз-читалка для обходу блокування дата-центрових IP (GitHub Actions)
+READER_PROXY = "https://r.jina.ai/"
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
