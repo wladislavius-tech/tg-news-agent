@@ -36,6 +36,7 @@ class ArticleMeta:
     site_name: str = ""
     video_url: str = ""    # пряме посилання на відеофайл (og:video)
     youtube_url: str = ""  # вбудоване YouTube-відео
+    body_excerpt: str = ""  # перші абзаци статті — для точності фактів у пості
     source_titles: list[str] = field(default_factory=list)
 
 
@@ -163,7 +164,32 @@ def fetch_article_meta(article_url: str) -> ArticleMeta:
         yt = _YOUTUBE_RE.search(html)
         if yt:
             meta.youtube_url = f"https://www.youtube.com/watch?v={yt.group(1)}"
+    meta.body_excerpt = _extract_body_excerpt(html)
     return meta
+
+
+def _extract_body_excerpt(html: str, limit: int = 900) -> str:
+    """Перші змістовні абзаци статті — джерело точних цифр і фактів для поста."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
+            tag.decompose()
+        paragraphs = []
+        total = 0
+        for p in soup.find_all("p"):
+            text = " ".join(p.get_text(" ", strip=True).split())
+            # відсіюємо службові рядки: підписки, кукі, копірайти
+            if len(text) < 60 or re.search(
+                r"cookie|підпис|телеграм|telegram|копіюванн|©|читайте також", text, re.I
+            ):
+                continue
+            paragraphs.append(text)
+            total += len(text)
+            if total >= limit:
+                break
+        return " ".join(paragraphs)[:limit]
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _unescape(text: str) -> str:
