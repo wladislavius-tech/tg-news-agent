@@ -20,6 +20,8 @@ def load() -> dict:
     state.setdefault("last_post_at", None)
     state.setdefault("daily", {"date": "", "titles": []})
     state.setdefault("digest_date", "")
+    state.setdefault("morning_date", "")
+    state.setdefault("rates", {"date": "", "values": {}})
     return state
 
 

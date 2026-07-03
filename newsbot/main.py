@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import random
 import sys
@@ -62,22 +63,81 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url)
         return caption, {"youtube_url": meta.youtube_url}
 
-    # Фото: перебираємо кілька джерел кластера, поки не знайдемо якісне
-    image = ukrnet.download_image(meta.image_url)
-    for src in sources[1:config.IMAGE_SOURCE_TRIES]:
-        if image:
+    # Фото: збираємо якісні знімки з кількох джерел. Для великих подій — до 3 фото
+    # (альбом), для звичайних — перше вдале.
+    want_album = item.related_count >= config.ALBUM_THRESHOLD
+    tries = config.ALBUM_SOURCE_TRIES if want_album else config.IMAGE_SOURCE_TRIES
+    images: list[bytes] = []
+    seen_hashes: set[str] = set()
+    for i, src in enumerate(sources[:tries]):
+        m = meta if i == 0 else ukrnet.fetch_article_meta(src.url)
+        img = ukrnet.download_image(m.image_url)
+        if img:
+            digest = hashlib.md5(img).hexdigest()
+            if digest not in seen_hashes:
+                seen_hashes.add(digest)
+                images.append(img)
+        if images and not want_album:
             break
-        alt_meta = ukrnet.fetch_article_meta(src.url)
-        image = ukrnet.download_image(alt_meta.image_url)
+        if len(images) >= config.ALBUM_MAX_PHOTOS:
+            break
+
     # Немає якісного фото — генеруємо AI-ілюстрацію
     ai_illustration = False
-    if image is None:
-        image = genimage.generate_illustration(item.title, meta.description)
-        ai_illustration = image is not None
-    if image is None:
-        image = cover.make_cover(item.title, now)
+    if not images:
+        generated = genimage.generate_illustration(item.title, meta.description)
+        if generated:
+            images = [generated]
+            ai_illustration = True
+    if not images:
+        images = [cover.make_cover(item.title, now)]
+
     caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration)
-    return caption, {"image": image}
+    if len(images) > 1:
+        return caption, {"album": images}
+    return caption, {"image": images[0]}
+
+
+WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
+
+
+def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
+    """О 07:xx публікує ранкову картку: дата, день війни, курси, пам'ятні дні."""
+    today = now.date().isoformat()
+    if now.hour != config.MORNING_HOUR or state.get("morning_date") == today:
+        return
+    from . import rates as rates_mod
+
+    war_day = (now.date() - WAR_START).days + 1
+    current = rates_mod.fetch_rates()
+    prev = (state.get("rates") or {}).get("values", {})
+    month_gen = cover._MONTHS_GEN[now.month - 1]
+    observances = llm.fetch_observances(now.day, month_gen)
+
+    card = cover.make_morning_card(now, war_day, current, prev, observances)
+    caption_lines = [
+        "<b>☕️ Доброго ранку, підписники!</b>",
+        f"Сьогодні — {now.day} {month_gen}, <b>{war_day}-й день</b> повномасштабної війни.",
+    ]
+    if observances:
+        import html as html_mod
+        caption_lines.append(f"Цього дня відзначають: {html_mod.escape(observances[0].lower())}.")
+    caption_lines.append(
+        f'📌 <a href="{config.CHANNEL_LINK}">{config.CHANNEL_NAME} — підписатися</a>'
+    )
+    caption = "\n\n".join(caption_lines)
+
+    if dry_run:
+        print("=" * 60)
+        print(caption)
+        print(f"[ранкова картка: {len(card)} байт]")
+    else:
+        tg.send_post(caption, image=card)
+        log.info("Ранковий дайджест опубліковано ✔")
+        state["morning_date"] = today
+        state["rates"] = {"date": today, "values": current}
+        state["last_post_at"] = now.isoformat()
+        state_mod.save(state)
 
 
 def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
@@ -113,6 +173,7 @@ def run(dry_run: bool, force: bool) -> None:
     state = state_mod.load()
     first_run = not state["posted_ids"] and not state.get("last_post_at")
 
+    maybe_post_morning(state, now, dry_run)
     maybe_post_digest(state, now, dry_run)
 
     items = ukrnet.fetch_feed(now)
@@ -168,6 +229,8 @@ def run(dry_run: bool, force: bool) -> None:
                 print(f"[відео: {len(media['video'])} байт]")
             elif "youtube_url" in media:
                 print(f"[YouTube: {media['youtube_url']}]")
+            elif "album" in media:
+                print(f"[альбом: {len(media['album'])} фото]")
             else:
                 print(f"[картинка: {len(media['image'])} байт]")
         else:

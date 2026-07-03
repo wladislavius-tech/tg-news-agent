@@ -105,6 +105,21 @@ def compose_post(
     return caption
 
 
+def fetch_observances(day: int, month_gen: str) -> list[str]:
+    """Загальновідомі пам'ятні дні на сьогодні (для ранкової картки)."""
+    if not config.GEMINI_API_KEY:
+        return []
+    data = _gemini_json(
+        f"Які міжнародні, всесвітні та українські пам'ятні дні або свята відзначають "
+        f"{day} {month_gen}? Наведи ЛИШЕ загальновідомі й реальні (жодних вигадок), "
+        f"від 2 до 5. Назви українською, коротко, без дати в назві. "
+        f'Відповідай строго JSON: {{"days": ["...", "..."]}}'
+    )
+    if not data or not isinstance(data.get("days"), list):
+        return []
+    return [str(d).strip() for d in data["days"] if str(d).strip()][:5]
+
+
 _DIGEST_PROMPT = """Ти — редактор українського Telegram-каналу новин. Ось заголовки
 постів за сьогодні. Обери {max_lines} НАЙВАЖЛИВІШИХ різних подій (без дублів однієї
 події) і стисни кожну в один рядок до 90 символів: почни з доречного емодзі, далі суть.

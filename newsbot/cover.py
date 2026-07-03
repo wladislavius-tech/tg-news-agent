@@ -43,6 +43,95 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, ma
     return lines
 
 
+_MONTHS_GEN = [
+    "січня", "лютого", "березня", "квітня", "травня", "червня",
+    "липня", "серпня", "вересня", "жовтня", "листопада", "грудня",
+]
+_WEEKDAYS = [
+    "понеділок", "вівторок", "середа", "четвер", "п'ятниця", "субота", "неділя",
+]
+
+
+def _arrow(cur: float | None, prev: float | None) -> tuple[str, tuple[int, int, int]]:
+    if cur is None or prev is None or abs(cur - prev) < 1e-9:
+        return "", (160, 175, 205)
+    return ("▲", (235, 87, 87)) if cur > prev else ("▼", (76, 187, 111))
+
+
+def make_morning_card(
+    when: datetime,
+    war_day: int,
+    rates: dict[str, float],
+    prev_rates: dict[str, float],
+    observances: list[str],
+) -> bytes:
+    """Ранкова інфокартка: дата, день війни, курси валют, пам'ятні дні."""
+    Wc, Hc = 1080, 1080
+    img = Image.new("RGB", (Wc, Hc))
+    draw = ImageDraw.Draw(img)
+    top, bottom = (11, 21, 48), (30, 52, 100)
+    for y in range(Hc):
+        t = y / Hc
+        draw.line(
+            [(0, y), (Wc, y)],
+            fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)),
+        )
+    m = 70  # поле
+
+    # Шапка
+    draw.rectangle([0, 0, Wc, 12], fill=(255, 197, 0))
+    draw.text((m, 52), "УКРАЇНСЬКІ НОВИНИ", font=_font(46), fill=(255, 197, 0))
+    date_str = f"{when.day} {_MONTHS_GEN[when.month - 1]} {when.year}, {_WEEKDAYS[when.weekday()]}"
+    draw.text((m, 118), date_str, font=_font(36), fill=(230, 236, 248))
+
+    # Стрічка "N-й день війни"
+    ribbon_text = f"{war_day}-й день повномасштабної війни"
+    rf = _font(34)
+    tw = draw.textlength(ribbon_text, font=rf)
+    draw.rounded_rectangle([m, 176, m + tw + 48, 232], radius=14, fill=(140, 30, 30))
+    draw.text((m + 24, 186), ribbon_text, font=rf, fill=(255, 235, 235))
+
+    y = 286
+    # Курси валют
+    draw.text((m, y), "КУРС ВАЛЮТ (НБУ)", font=_font(38), fill=(255, 197, 0))
+    y += 64
+    row_f, val_f = _font(40), _font(40)
+    labels = {"USD": "Долар $", "EUR": "Євро €", "PLN": "Злотий zł", "BTC": "Біткоїн ₿"}
+    for code in ("USD", "EUR", "PLN", "BTC"):
+        if code not in rates:
+            continue
+        val = rates[code]
+        val_str = f"${val:,.0f}".replace(",", " ") if code == "BTC" else f"{val:.2f} грн"
+        arrow, a_color = _arrow(val, prev_rates.get(code))
+        draw.text((m, y), labels[code], font=row_f, fill=(230, 236, 248))
+        draw.text((m + 480, y), val_str, font=val_f, fill=(255, 255, 255))
+        if arrow:
+            draw.text((m + 760, y), arrow, font=val_f, fill=a_color)
+        y += 62
+    y += 30
+    draw.line([(m, y), (Wc - m, y)], fill=(70, 90, 135), width=2)
+    y += 34
+
+    # Цього дня
+    if observances:
+        draw.text((m, y), "ЦЬОГО ДНЯ ВІДЗНАЧАЮТЬ", font=_font(38), fill=(255, 197, 0))
+        y += 64
+        item_f = _font(32)
+        for obs in observances[:5]:
+            for j, line in enumerate(_wrap(draw, obs, item_f, Wc - 2 * m - 40)[:2]):
+                prefix = "»  " if j == 0 else "    "
+                draw.text((m, y), prefix + line, font=item_f, fill=(230, 236, 248))
+                y += 44
+            y += 8
+            if y > Hc - 120:
+                break
+
+    draw.rectangle([0, Hc - 12, Wc, Hc], fill=(255, 197, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
 def make_cover(title: str, when: datetime) -> bytes:
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)
