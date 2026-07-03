@@ -157,7 +157,7 @@ def _unescape(text: str) -> str:
 
 
 def download_image(url: str) -> bytes | None:
-    """Завантажує картинку статті; None — якщо бита, замала або не картинка."""
+    """Завантажує картинку статті; None — якщо бита, замала або неякісна."""
     if not url:
         return None
     try:
@@ -167,7 +167,26 @@ def download_image(url: str) -> bytes | None:
     ctype = resp.headers.get("Content-Type", "")
     if "image" not in ctype or len(resp.content) < config.MIN_IMAGE_BYTES:
         return None
+    if not _image_quality_ok(resp.content):
+        return None
     return resp.content
+
+
+def _image_quality_ok(data: bytes) -> bool:
+    """Відсіює замалі та дивно обрізані картинки (кадри з відео, банери)."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(data))
+        w, h = img.size
+    except Exception:
+        return False
+    if w < config.MIN_IMAGE_WIDTH or h < config.MIN_IMAGE_HEIGHT:
+        return False
+    aspect = w / h
+    return 0.5 <= aspect <= 2.6
 
 
 def download_video(url: str) -> bytes | None:

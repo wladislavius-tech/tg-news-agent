@@ -61,7 +61,13 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         return caption, {"youtube_url": meta.youtube_url}
 
     caption = llm.compose_post(item, sources, meta)
+    # Фото: перебираємо кілька джерел кластера, поки не знайдемо якісне
     image = ukrnet.download_image(meta.image_url)
+    for src in sources[1:config.IMAGE_SOURCE_TRIES]:
+        if image:
+            break
+        alt_meta = ukrnet.fetch_article_meta(src.url)
+        image = ukrnet.download_image(alt_meta.image_url)
     if image is None:
         image = cover.make_cover(item.title, now)
     return caption, {"image": image}

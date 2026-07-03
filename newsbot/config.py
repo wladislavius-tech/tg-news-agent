@@ -66,5 +66,8 @@ TITLE_SIMILARITY = 0.55
 # --- Пости ---
 CAPTION_LIMIT = 950  # ліміт Telegram для підпису до фото — 1024
 MIN_IMAGE_BYTES = 8_000  # менші картинки вважаємо битими/заглушками
+MIN_IMAGE_WIDTH = 550    # відсіюємо неякісні фото (кадри з відео, прев'юшки)
+MIN_IMAGE_HEIGHT = 320
+IMAGE_SOURCE_TRIES = 3   # у скількох статей кластера шукати пристойне фото
 MIN_VIDEO_BYTES = 100_000
 MAX_VIDEO_BYTES = 45_000_000  # ліміт завантаження для ботів Telegram — 50 МБ
