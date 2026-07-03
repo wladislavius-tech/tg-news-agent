@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -102,19 +103,23 @@ def run(dry_run: bool, force: bool) -> None:
         )
         return
 
-    # Скільки постів цього запуску
+    # Зазвичай один пост за запуск; другий — лише для ДУЖЕ термінової новини,
+    # і публікується він з паузою, а не одночасно з першим
     limit = config.MAX_POSTS_NIGHT if is_night(now) else config.MAX_POSTS_DAY
     chosen = [top]
     if (
         limit > 1
         and len(candidates) > 1
-        and candidates[1].related_count >= config.HOT_THRESHOLD
+        and candidates[1].related_count >= config.SECOND_POST_THRESHOLD
     ):
         chosen.append(candidates[1])
     if first_run:
         chosen = chosen[:1]  # перший запуск — один пост, без "зливи" старих новин
 
-    for item in chosen:
+    for i, item in enumerate(chosen):
+        if i > 0 and not dry_run:
+            log.info("Пауза %d хв перед наступним постом", config.POSTS_GAP_SECONDS // 60)
+            time.sleep(config.POSTS_GAP_SECONDS)
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
         try:
             caption, media = build_post(item, now)
@@ -134,9 +139,8 @@ def run(dry_run: bool, force: bool) -> None:
             tg.send_post(caption, **media)
             log.info("Опубліковано ✔")
         state_mod.remember_post(state, item.cluster_id, item.title, now)
-
-    if not dry_run:
-        state_mod.save(state)
+        if not dry_run:
+            state_mod.save(state)
 
 
 def main() -> None:
