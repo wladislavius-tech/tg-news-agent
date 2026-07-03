@@ -76,7 +76,8 @@ def compose_post(
     ai_illustration — картинка згенерована ШІ; чесно позначаємо це у пості.
     source_url/source_name — явне посилання на джерело (для трендів з TG-каналів).
     """
-    generated = _gemini_generate(item, sources, meta) if config.GEMINI_API_KEY else None
+    has_ai = bool(config.GEMINI_API_KEY or config.GROQ_API_KEY)
+    generated = _gemini_generate(item, sources, meta) if has_ai else None
     if generated:
         headline, body = generated
     else:
@@ -119,7 +120,7 @@ def compose_post(
 
 def fetch_observances(day: int, month_gen: str) -> list[str]:
     """Загальновідомі пам'ятні дні на сьогодні (для ранкової картки)."""
-    if not config.GEMINI_API_KEY:
+    if not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
         return []
     data = _gemini_json(
         f"Які міжнародні, всесвітні та українські пам'ятні дні або свята відзначають "
@@ -140,7 +141,7 @@ _ZODIAC = [
 
 def compose_horoscope(date_str: str) -> str | None:
     """Гороскоп на день для всіх 12 знаків. None — якщо Gemini недоступний."""
-    if not config.GEMINI_API_KEY:
+    if not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
         return None
     signs = ", ".join(z.split()[1] for z in _ZODIAC)
     data = _gemini_json(
@@ -177,7 +178,7 @@ _DIGEST_PROMPT = """Ти — редактор українського Telegram-
 def compose_digest(titles: list[str], now_str: str) -> str:
     """Вечірній дайджест «Головне за день»."""
     lines: list[str] | None = None
-    if config.GEMINI_API_KEY:
+    if config.GEMINI_API_KEY or config.GROQ_API_KEY:
         prompt = _DIGEST_PROMPT.format(
             max_lines=config.DIGEST_MAX_LINES,
             titles="\n".join(f"- {t}" for t in titles),
@@ -193,26 +194,51 @@ def compose_digest(titles: list[str], now_str: str) -> str:
     return f"<b>🌙 Головне за {now_str}</b>\n\n{body}\n\n{footer}"
 
 
+def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до Groq (OpenAI-сумісний API) — другий безкоштовний провайдер."""
+    if not config.GROQ_API_KEY:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.GROQ_API_KEY}"},
+            json={
+                "model": config.GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_tokens": 4000,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Groq %s: %s", config.GROQ_MODEL, exc)
+        return None
+
+
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит до Gemini: основна модель, при збої/квоті — резервна."""
-    for model in (config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL):
-        gen_cfg: dict = {
-            "temperature": temperature,
-            "maxOutputTokens": 4000,
-            "responseMimeType": "application/json",
-        }
-        if "2.5" in model:  # thinkingConfig підтримують лише 2.5-моделі
-            gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
-        try:
-            resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=60)
-            resp.raise_for_status()
-            return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Gemini %s: %s", model, exc)
-            continue
-    return None
+    """JSON-запит: Gemini (основна → резервна модель), при вичерпаній квоті — Groq."""
+    if config.GEMINI_API_KEY:
+        for model in (config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL):
+            gen_cfg: dict = {
+                "temperature": temperature,
+                "maxOutputTokens": 4000,
+                "responseMimeType": "application/json",
+            }
+            if "2.5" in model:  # thinkingConfig підтримують лише 2.5-моделі
+                gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
+            try:
+                resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=60)
+                resp.raise_for_status()
+                return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Gemini %s: %s", model, exc)
+                continue
+    return _groq_json(prompt, temperature)
 
 
 def _gemini_generate(

@@ -50,13 +50,11 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     """Повертає (підпис, медіа): відео першоджерела → YouTube → фото → обкладинка."""
     src_kwargs: dict = {}
     if item.cluster_id.startswith("tg:"):
-        # Тренд з Telegram-каналу: сторінка поста t.me має og:image та og:description
-        channel = item.cluster_id.removeprefix("tg:").split("/")[0]
-        sources = [ukrnet.SourceArticle(item.title, item.url, f"t.me/{channel}")]
-        meta = ukrnet.fetch_article_meta(item.url)
-        meta.description = tgtrends.clean_text(meta.description)
-        src_kwargs = {"source_url": item.url, "source_name": f"@{channel}",
-                      "require_ai": True}
+        # Тренд з Telegram-каналу: текст переписує Gemini (обов'язково),
+        # фото джерела НЕ беремо — далі спрацює AI-ілюстрація або обкладинка
+        sources = []
+        meta = ukrnet.ArticleMeta(description=item.description or item.title)
+        src_kwargs = {"require_ai": True}
     else:
         sources = ukrnet.fetch_cluster_sources(item.url)
         meta = ukrnet.ArticleMeta()
@@ -213,16 +211,20 @@ def run(dry_run: bool, force: bool) -> None:
     log.info("Стрічка: %d новин", len(items))
     candidates = pick_candidates(items, state, now)
     if not candidates:
-        # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст)
-        trends = [
-            tgtrends.to_feed_item(p) for p in tgtrends.fetch_trends(now)
-        ]
-        candidates = [
-            it for it in trends
-            if not state_mod.is_duplicate(state, it.cluster_id, it.title)
-        ]
-        if candidates:
-            log.info("Укрнет порожній, беру тренд із Telegram: %r", candidates[0].title)
+        # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст).
+        # Якщо ця ж подія є на Укрнеті — постимо укрнетівський кластер:
+        # звичайний конвеєр дасть фото і описи від видань-першоджерел.
+        for trend in tgtrends.fetch_trends(now):
+            it = tgtrends.to_feed_item(trend)
+            matched = tgtrends.match_feed_item(trend.text, items)
+            if matched:
+                matched.related_count = max(matched.related_count, it.related_count)
+                it = matched
+            if state_mod.is_duplicate(state, it.cluster_id, it.title):
+                continue
+            candidates = [it]
+            log.info("Укрнет без кандидатів, беру тренд із Telegram: %r", it.title)
+            break
     if not candidates:
         log.info("Нових новин, вартих поста, немає")
         return

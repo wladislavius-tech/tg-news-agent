@@ -118,4 +118,29 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         url=post.url,
         published=post.published,
         related_count=max(2, post.views // 10_000),
+        description=post.text,
     )
+
+
+_MATCH_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
+
+
+def match_feed_item(trend_text: str, items: list[FeedItem]) -> FeedItem | None:
+    """Шукає цю ж подію в стрічці Укрнету (за перетином значущих слів).
+
+    Якщо знайдено — краще постити укрнетівський кластер: звичайний конвеєр
+    дасть фото та описи від видань-першоджерел.
+    """
+    trend_words = {w.lower() for w in _MATCH_WORD_RE.findall(trend_text)}
+    if not trend_words:
+        return None
+    best, best_score = None, 0.0
+    for it in items:
+        title_words = {w.lower() for w in _MATCH_WORD_RE.findall(it.title)}
+        if not title_words:
+            continue
+        overlap = trend_words & title_words
+        score = len(overlap) / len(title_words)
+        if len(overlap) >= 3 and score > best_score:
+            best, best_score = it, score
+    return best if best_score >= 0.5 else None
