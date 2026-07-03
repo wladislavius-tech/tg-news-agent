@@ -25,7 +25,8 @@ _PROMPT = """Ти — редактор популярного українськ
 - headline: один ударний рядок до 90 символів. Почни з 1–2 емодзі під настрій новини:
   ⚡️ термінове/щойно, 💔 трагедія, 😨 тривожне, 🤯 шокуюче, 🔥 гаряче, ✈️/🚀/💥 атаки та ППО,
   🇺🇦 перемоги, 💰 гроші, ⚽️ спорт, 🌦 погода, 😁 курйози. Без крапки в кінці.
-- body: 1–3 короткі речення. Найважливіші цифри, місця й імена виділи **подвійними зірочками**.
+- paragraphs: 2–3 КОРОТКІ абзаци по 1–2 речення кожен. Перший — головний факт,
+  далі — деталі та контекст. Найважливіші цифри, місця й імена виділи **подвійними зірочками**.
   Пиши енергійно, наче розповідаєш другові, але тримайся фактів. Трагедії — стримано, без смайлів у тексті.
 - Жодних хештегів.
 
@@ -34,7 +35,7 @@ _PROMPT = """Ти — редактор популярного українськ
 Заголовки інших видань про цю ж подію:
 {alt_titles}
 
-Відповідай строго JSON-об'єктом: {{"headline": "...", "body": "..."}}"""
+Відповідай строго JSON-об'єктом: {{"headline": "...", "paragraphs": ["...", "...", "..."]}}"""
 
 _BOLD_RE = None  # ініціалізується у _md_bold_to_html
 
@@ -46,6 +47,15 @@ def _md_bold_to_html(text: str) -> str:
     if _BOLD_RE is None:
         _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
     return _BOLD_RE.sub(r"<b>\1</b>", html.escape(text))
+
+
+def _md_bold_strip(text: str) -> str:
+    """Екранує HTML і прибирає **зірочки** (для заголовка, який і так жирний)."""
+    global _BOLD_RE
+    import re
+    if _BOLD_RE is None:
+        _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+    return _BOLD_RE.sub(r"\1", html.escape(text))
 
 
 def compose_post(
@@ -71,7 +81,7 @@ def compose_post(
 
     body_html = _md_bold_to_html(body) if body else ""
 
-    parts = [f"<b>{_md_bold_to_html(headline)}</b>"]
+    parts = [f"<b>{_md_bold_strip(headline)}</b>"]
     if body_html:
         parts.append(body_html)
     if youtube_url:
@@ -116,26 +126,32 @@ def _gemini_generate(
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 2000,
+            "temperature": 0.6,
+            "maxOutputTokens": 4000,
             "responseMimeType": "application/json",
+            # без "роздумів": короткому посту вони не потрібні, а токени з'їдають
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
-    try:
-        resp = requests.post(
-            url,
-            params={"key": config.GEMINI_API_KEY},
-            json=payload,
-            timeout=60,
-        )
-        resp.raise_for_status()
-        text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-        data = json.loads(text)
-        headline = str(data["headline"]).strip()
-        body = str(data["body"]).strip()
-        if not headline or not body:
-            raise ValueError("порожня відповідь")
-        return headline, body
-    except Exception as exc:  # noqa: BLE001 — будь-який збій AI не має зупиняти постинг
-        log.warning("Gemini недоступний (%s), використовую простий формат поста", exc)
-        return None
+    last_exc: Exception | None = None
+    for _attempt in range(2):
+        try:
+            resp = requests.post(
+                url,
+                params={"key": config.GEMINI_API_KEY},
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            data = json.loads(text)
+            headline = str(data["headline"]).strip()
+            paragraphs = [str(p).strip() for p in data.get("paragraphs", []) if str(p).strip()]
+            body = "\n\n".join(paragraphs)
+            if not headline or not body:
+                raise ValueError("порожня відповідь")
+            return headline, body
+        except Exception as exc:  # noqa: BLE001 — будь-який збій AI не має зупиняти постинг
+            last_exc = exc
+    log.warning("Gemini недоступний (%s), використовую простий формат поста", last_exc)
+    return None
