@@ -1,6 +1,8 @@
 """Публікація постів через Telegram Bot API."""
 from __future__ import annotations
 
+import json
+
 import requests
 
 from . import config
@@ -21,8 +23,37 @@ def _call(method: str, *, data: dict, files: dict | None = None) -> dict:
     return payload["result"]
 
 
-def send_post(caption: str, image: bytes | None) -> None:
-    if image:
+def send_post(
+    caption: str,
+    image: bytes | None = None,
+    video: bytes | None = None,
+    youtube_url: str = "",
+) -> None:
+    if video:
+        _call(
+            "sendVideo",
+            data={
+                "chat_id": config.TELEGRAM_CHANNEL,
+                "caption": caption,
+                "parse_mode": "HTML",
+                "supports_streaming": "true",
+            },
+            files={"video": ("news.mp4", video, "video/mp4")},
+        )
+    elif youtube_url:
+        # Текстовий пост з великим YouTube-прев'ю (вбудований плеєр)
+        _call(
+            "sendMessage",
+            data={
+                "chat_id": config.TELEGRAM_CHANNEL,
+                "text": caption,
+                "parse_mode": "HTML",
+                "link_preview_options": json.dumps(
+                    {"url": youtube_url, "prefer_large_media": True}
+                ),
+            },
+        )
+    elif image:
         _call(
             "sendPhoto",
             data={

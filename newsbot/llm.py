@@ -32,8 +32,18 @@ _PROMPT = """Ти — редактор українського новинног
 Відповідай строго JSON-об'єктом: {{"headline": "...", "body": "...", "hashtags": ["#...", "#..."]}}"""
 
 
-def compose_post(item: FeedItem, sources: list[SourceArticle], meta: ArticleMeta) -> str:
-    """Повертає готовий підпис поста (HTML для Telegram)."""
+def compose_post(
+    item: FeedItem,
+    sources: list[SourceArticle],
+    meta: ArticleMeta,
+    video_credit: str = "",
+    youtube_url: str = "",
+) -> str:
+    """Повертає готовий підпис поста (HTML для Telegram).
+
+    video_credit — автор/видання, чиє відео постимо (обов'язкове зазначення авторства).
+    youtube_url — YouTube-відео новини; додається посиланням у пост.
+    """
     generated = _gemini_generate(item, sources, meta) if config.GEMINI_API_KEY else None
     if generated:
         headline, body, hashtags = generated
@@ -45,9 +55,14 @@ def compose_post(item: FeedItem, sources: list[SourceArticle], meta: ArticleMeta
     parts = [f"<b>{html.escape(headline)}</b>"]
     if body:
         parts.append(html.escape(body))
+    if youtube_url:
+        parts.append(f'▶️ <a href="{html.escape(youtube_url, quote=True)}">Дивитися відео</a>')
     if sources:
         src = sources[0]
-        parts.append(f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>')
+        credit = f'🔗 <a href="{html.escape(src.url, quote=True)}">Джерело: {html.escape(src.domain)}</a>'
+        if video_credit:
+            credit += f"\n🎥 Відео: {html.escape(video_credit)}"
+        parts.append(credit)
     if hashtags:
         parts.append(html.escape(" ".join(hashtags)))
 

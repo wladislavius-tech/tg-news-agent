@@ -32,6 +32,9 @@ class SourceArticle:
 class ArticleMeta:
     image_url: str = ""
     description: str = ""
+    site_name: str = ""
+    video_url: str = ""    # пряме посилання на відеофайл (og:video)
+    youtube_url: str = ""  # вбудоване YouTube-відео
     source_titles: list[str] = field(default_factory=list)
 
 
@@ -104,29 +107,47 @@ def fetch_cluster_sources(cluster_url: str) -> list[SourceArticle]:
 
 
 _OG_RE = re.compile(
-    r'<meta[^>]+(?:property|name)=["\']og:(image|description)["\'][^>]+content=["\']([^"\']+)',
+    r'<meta[^>]+(?:property|name)=["\']og:(image|description|site_name|video(?::(?:secure_)?url)?)["\']'
+    r'[^>]+content=["\']([^"\']+)',
     re.IGNORECASE,
 )
 _OG_RE_REV = re.compile(
-    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:(image|description)["\']',
+    r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+'
+    r'(?:property|name)=["\']og:(image|description|site_name|video(?::(?:secure_)?url)?)["\']',
     re.IGNORECASE,
+)
+_YOUTUBE_RE = re.compile(
+    r'(?:youtube(?:-nocookie)?\.com/(?:embed/|watch\?v=)|youtu\.be/)([A-Za-z0-9_-]{11})'
 )
 
 
 def fetch_article_meta(article_url: str) -> ArticleMeta:
-    """Дістає og:image та og:description зі сторінки першоджерела."""
+    """Дістає og:image, og:description, og:video та YouTube-вставки з першоджерела."""
     meta = ArticleMeta()
     try:
-        html = _get(article_url).text[:200_000]
+        html = _get(article_url).text[:300_000]
     except Exception:
         return meta
     found: dict[str, str] = {}
     for key, value in _OG_RE.findall(html):
-        found.setdefault(key.lower(), value)
+        found.setdefault(key.lower().split(":")[0], value)
     for value, key in _OG_RE_REV.findall(html):
-        found.setdefault(key.lower(), value)
+        found.setdefault(key.lower().split(":")[0], value)
     meta.image_url = found.get("image", "")
     meta.description = _unescape(found.get("description", ""))
+    meta.site_name = _unescape(found.get("site_name", ""))
+
+    video = found.get("video", "")
+    if video:
+        yt = _YOUTUBE_RE.search(video)
+        if yt:
+            meta.youtube_url = f"https://www.youtube.com/watch?v={yt.group(1)}"
+        elif video.lower().split("?")[0].endswith((".mp4", ".mov", ".webm")):
+            meta.video_url = video
+    if not meta.youtube_url:
+        yt = _YOUTUBE_RE.search(html)
+        if yt:
+            meta.youtube_url = f"https://www.youtube.com/watch?v={yt.group(1)}"
     return meta
 
 
@@ -147,3 +168,31 @@ def download_image(url: str) -> bytes | None:
     if "image" not in ctype or len(resp.content) < config.MIN_IMAGE_BYTES:
         return None
     return resp.content
+
+
+def download_video(url: str) -> bytes | None:
+    """Завантажує відео першоджерела; None — якщо не відео або завелике для Telegram."""
+    if not url:
+        return None
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": config.USER_AGENT},
+            timeout=config.HTTP_TIMEOUT,
+            stream=True,
+        )
+        resp.raise_for_status()
+        ctype = resp.headers.get("Content-Type", "")
+        length = int(resp.headers.get("Content-Length") or 0)
+        if "video" not in ctype or length > config.MAX_VIDEO_BYTES:
+            return None
+        chunks, total = [], 0
+        for chunk in resp.iter_content(chunk_size=1 << 18):
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > config.MAX_VIDEO_BYTES:
+                return None
+        data = b"".join(chunks)
+        return data if len(data) >= config.MIN_VIDEO_BYTES else None
+    except Exception:
+        return None

@@ -43,17 +43,28 @@ def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) ->
     return fresh
 
 
-def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, bytes | None]:
+def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
+    """Повертає (підпис, медіа): відео першоджерела → YouTube → фото → обкладинка."""
     sources = ukrnet.fetch_cluster_sources(item.url)
     meta = ukrnet.ArticleMeta()
     if sources:
         meta = ukrnet.fetch_article_meta(sources[0].url)
-    caption = llm.compose_post(item, sources, meta)
 
+    video = ukrnet.download_video(meta.video_url)
+    if video:
+        credit = meta.site_name or (sources[0].domain if sources else "")
+        caption = llm.compose_post(item, sources, meta, video_credit=credit)
+        return caption, {"video": video}
+
+    if meta.youtube_url:
+        caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url)
+        return caption, {"youtube_url": meta.youtube_url}
+
+    caption = llm.compose_post(item, sources, meta)
     image = ukrnet.download_image(meta.image_url)
     if image is None:
         image = cover.make_cover(item.title, now)
-    return caption, image
+    return caption, {"image": image}
 
 
 def run(dry_run: bool, force: bool) -> None:
@@ -95,16 +106,21 @@ def run(dry_run: bool, force: bool) -> None:
     for item in chosen:
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
         try:
-            caption, image = build_post(item, now)
+            caption, media = build_post(item, now)
         except Exception:
             log.exception("Не вдалося зібрати пост, пропускаю")
             continue
         if dry_run:
             print("=" * 60)
             print(caption)
-            print(f"[картинка: {'є, ' + str(len(image)) + ' байт' if image else 'немає'}]")
+            if "video" in media:
+                print(f"[відео: {len(media['video'])} байт]")
+            elif "youtube_url" in media:
+                print(f"[YouTube: {media['youtube_url']}]")
+            else:
+                print(f"[картинка: {len(media['image'])} байт]")
         else:
-            tg.send_post(caption, image)
+            tg.send_post(caption, **media)
             log.info("Опубліковано ✔")
         state_mod.remember_post(state, item.cluster_id, item.title, now)
 
