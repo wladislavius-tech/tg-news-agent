@@ -20,6 +20,7 @@ class FeedItem:
     published: datetime  # київський час
     related_count: int
     description: str = ""  # повний текст (лише для трендів з TG-каналів)
+    video_url: str = ""     # пряме відео (лише для трендів з TG-каналів)
 
 
 @dataclass

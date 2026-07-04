@@ -47,39 +47,61 @@ def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) ->
 
 
 def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
-    """Повертає (підпис, медіа): відео першоджерела → YouTube → фото → обкладинка."""
+    """Повертає (підпис, медіа).
+
+    Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
+    YouTube-прев'ю (лише коли фото немає) → AI-ілюстрація → обкладинка.
+    """
     src_kwargs: dict = {}
     if item.cluster_id.startswith("tg:"):
-        # Тренд з Telegram-каналу: текст переписує Gemini (обов'язково),
-        # фото джерела НЕ беремо — далі спрацює AI-ілюстрація або обкладинка
+        # Тренд з Telegram-каналу: текст переписує Gemini (обов'язково)
         sources = []
         meta = ukrnet.ArticleMeta(description=item.description or item.title)
         src_kwargs = {"require_ai": True}
-    else:
-        sources = ukrnet.fetch_cluster_sources(item.url)
-        meta = ukrnet.ArticleMeta()
-        if sources:
-            meta = ukrnet.fetch_article_meta(sources[0].url)
+        channel = item.cluster_id.removeprefix("tg:").split("/")[0]
+        # Коротке відео тренда — найцінніше медіа
+        if item.video_url:
+            video = ukrnet.download_video(item.video_url)
+            if video:
+                caption = llm.compose_post(
+                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
+                )
+                return caption, {"video": video}
+        caption = llm.compose_post(item, sources, meta, **src_kwargs)
+        image = genimage.generate_illustration(item.title, meta.description)
+        if image:
+            return caption, {"image": image}
+        return caption, {"image": cover.make_cover(item.title, now)}
 
-    video = ukrnet.download_video(meta.video_url)
-    if video:
-        credit = meta.site_name or (sources[0].domain if sources else "")
-        caption = llm.compose_post(item, sources, meta, video_credit=credit, **src_kwargs)
-        return caption, {"video": video}
+    sources = ukrnet.fetch_cluster_sources(item.url)
+    metas: dict[int, ukrnet.ArticleMeta] = {}
 
-    if meta.youtube_url:
-        caption = llm.compose_post(item, sources, meta, youtube_url=meta.youtube_url, **src_kwargs)
-        return caption, {"youtube_url": meta.youtube_url}
+    def src_meta(i: int) -> ukrnet.ArticleMeta:
+        if i not in metas:
+            metas[i] = ukrnet.fetch_article_meta(sources[i].url)
+        return metas[i]
 
-    # Фото: збираємо якісні знімки з кількох джерел. Для великих подій — до 3 фото
-    # (альбом), для звичайних — перше вдале.
+    meta = src_meta(0) if sources else ukrnet.ArticleMeta()
+
+    # 1) Пряме коротке відео: шукаємо у кількох джерелах кластера
+    for i in range(min(len(sources), config.VIDEO_SOURCE_TRIES)):
+        m = src_meta(i)
+        if not m.video_url:
+            continue
+        video = ukrnet.download_video(m.video_url)
+        if video:
+            credit = m.site_name or sources[i].domain
+            caption = llm.compose_post(item, sources, meta, video_credit=credit, **src_kwargs)
+            return caption, {"video": video}
+
+    # 2) Фото: якісні знімки з кількох джерел. Для великих подій — альбом до 3 фото
     want_album = item.related_count >= config.ALBUM_THRESHOLD
     tries = config.ALBUM_SOURCE_TRIES if want_album else config.IMAGE_SOURCE_TRIES
     images: list[bytes] = []
     first_image_url = ""  # для колажу вечірнього дайджесту
     seen_hashes: set[str] = set()
-    for i, src in enumerate(sources[:tries]):
-        m = meta if i == 0 else ukrnet.fetch_article_meta(src.url)
+    for i in range(min(len(sources), tries)):
+        m = src_meta(i)
         img = ukrnet.download_image(m.image_url)
         if img:
             digest = hashlib.md5(img).hexdigest()
@@ -93,13 +115,21 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         if len(images) >= config.ALBUM_MAX_PHOTOS:
             break
 
-    # Немає якісного фото — генеруємо AI-ілюстрацію
+    # 3) Фото немає — YouTube-прев'ю як запасний варіант
+    if not images:
+        youtube = next((m.youtube_url for m in metas.values() if m.youtube_url), "")
+        if youtube:
+            caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
+            return caption, {"youtube_url": youtube}
+
+    # 4) AI-ілюстрація
     ai_illustration = False
     if not images:
         generated = genimage.generate_illustration(item.title, meta.description)
         if generated:
             images = [generated]
             ai_illustration = True
+    # 5) Шаблонна обкладинка
     if not images:
         images = [cover.make_cover(item.title, now)]
 
@@ -132,7 +162,11 @@ def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
     ]
     if observances:
         import html as html_mod
-        caption_lines.append(f"Цього дня відзначають: {html_mod.escape(observances[0].lower())}.")
+        obs = observances[0]
+        # З малої лише першу літеру, не всю назву («День незалежності США» ≠ «сша»)
+        if len(obs) > 1 and not obs[1].isupper():
+            obs = obs[0].lower() + obs[1:]
+        caption_lines.append(f"Цього дня відзначають: {html_mod.escape(obs)}.")
     caption_lines.append(
         f'📌 <a href="{config.CHANNEL_LINK}">{config.CHANNEL_NAME} — підписатися</a>'
     )

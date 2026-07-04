@@ -58,6 +58,10 @@ def _arrow(cur: float | None, prev: float | None) -> tuple[str, tuple[int, int, 
     return ("▲", (235, 87, 87)) if cur > prev else ("▼", (76, 187, 111))
 
 
+def _panel(draw, box, radius=22, fill=(20, 34, 70), outline=(58, 80, 130)):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=2)
+
+
 def make_morning_card(
     when: datetime,
     war_day: int,
@@ -65,68 +69,91 @@ def make_morning_card(
     prev_rates: dict[str, float],
     observances: list[str],
 ) -> bytes:
-    """Ранкова інфокартка: дата, день війни, курси валют, пам'ятні дні."""
+    """Ранкова інфокартка в стилі УС: окремі блоки-картки для кожної валюти,
+    розділені секції, стрічка дня війни, панель пам'ятних днів."""
     Wc, Hc = 1080, 1080
     img = Image.new("RGB", (Wc, Hc))
     draw = ImageDraw.Draw(img)
-    top, bottom = (11, 21, 48), (30, 52, 100)
+    top, bottom = (9, 17, 40), (26, 46, 92)
     for y in range(Hc):
         t = y / Hc
         draw.line(
             [(0, y), (Wc, y)],
             fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)),
         )
-    m = 70  # поле
+    m = 56  # зовнішнє поле
 
-    # Шапка
-    draw.rectangle([0, 0, Wc, 12], fill=(255, 197, 0))
-    draw.text((m, 52), "УКРАЇНСЬКІ НОВИНИ", font=_font(46), fill=(255, 197, 0))
-    date_str = f"{when.day} {_MONTHS_GEN[when.month - 1]} {when.year}, {_WEEKDAYS[when.weekday()]}"
-    draw.text((m, 118), date_str, font=_font(36), fill=(230, 236, 248))
+    # --- Шапка: бренд-плашка зліва, дата-пігулка справа ---
+    draw.rectangle([0, 0, Wc, 10], fill=(255, 197, 0))
+    _panel(draw, [m, 44, m + 470, 116], fill=(255, 197, 0), outline=(255, 197, 0))
+    draw.text((m + 235, 80), "УКРАЇНСЬКІ НОВИНИ", font=_font(38), fill=(15, 23, 42), anchor="mm")
+    date_str = f"{when.day} {_MONTHS_GEN[when.month - 1]} {when.year}"
+    weekday = _WEEKDAYS[when.weekday()]
+    _panel(draw, [Wc - m - 400, 44, Wc - m, 116])
+    draw.text((Wc - m - 200, 68), date_str, font=_font(34), fill=(255, 255, 255), anchor="mm")
+    draw.text((Wc - m - 200, 100), weekday, font=_font(24), fill=(160, 175, 205), anchor="mm")
 
-    # Стрічка "N-й день війни"
-    ribbon_text = f"{war_day}-й день повномасштабної війни"
-    rf = _font(34)
-    tw = draw.textlength(ribbon_text, font=rf)
-    draw.rounded_rectangle([m, 176, m + tw + 48, 232], radius=14, fill=(140, 30, 30))
-    draw.text((m + 24, 186), ribbon_text, font=rf, fill=(255, 235, 235))
+    # --- Стрічка "N-й день війни" на всю ширину ---
+    _panel(draw, [m, 150, Wc - m, 216], fill=(126, 24, 24), outline=(126, 24, 24))
+    draw.text(
+        (Wc // 2, 183), f"{war_day}-й день повномасштабної війни",
+        font=_font(36), fill=(255, 235, 235), anchor="mm",
+    )
 
-    y = 286
-    # Курси валют
-    draw.text((m, y), "КУРС ВАЛЮТ (НБУ)", font=_font(38), fill=(255, 197, 0))
-    y += 64
-    row_f, val_f = _font(40), _font(40)
-    labels = {"USD": "Долар $", "EUR": "Євро €", "PLN": "Злотий zł", "BTC": "Біткоїн ₿"}
-    for code in ("USD", "EUR", "PLN", "BTC"):
-        if code not in rates:
-            continue
-        val = rates[code]
-        val_str = f"${val:,.0f}".replace(",", " ") if code == "BTC" else f"{val:.2f} грн"
-        arrow, a_color = _arrow(val, prev_rates.get(code))
-        draw.text((m, y), labels[code], font=row_f, fill=(230, 236, 248))
-        draw.text((m + 480, y), val_str, font=val_f, fill=(255, 255, 255))
-        if arrow:
-            draw.text((m + 760, y), arrow, font=val_f, fill=a_color)
-        y += 62
-    y += 30
-    draw.line([(m, y), (Wc - m, y)], fill=(70, 90, 135), width=2)
-    y += 34
+    # --- Секція КУРС ВАЛЮТ: 2×2 окремі картки ---
+    y0 = 268
+    draw.text((m, y0), "КУРС ВАЛЮТ", font=_font(40), fill=(255, 197, 0))
+    draw.text((Wc - m, y0 + 6), "за даними НБУ", font=_font(26), fill=(140, 155, 190), anchor="ra")
+    y0 += 66
+    card_w = (Wc - 2 * m - 28) // 2
+    card_h = 170
+    cells = [
+        ("USD", "ДОЛАР • USD"), ("EUR", "ЄВРО • EUR"),
+        ("PLN", "ЗЛОТИЙ • PLN"), ("BTC", "БІТКОЇН • BTC"),
+    ]
+    for idx, (code, label) in enumerate(cells):
+        cx = m + (idx % 2) * (card_w + 28)
+        cy = y0 + (idx // 2) * (card_h + 24)
+        _panel(draw, [cx, cy, cx + card_w, cy + card_h])
+        draw.text((cx + 28, cy + 24), label, font=_font(30), fill=(160, 175, 205))
+        if code in rates:
+            val = rates[code]
+            if code == "BTC":
+                val_str = f"${val:,.0f}".replace(",", " ")
+            else:
+                val_str = f"{val:.2f}"
+            draw.text((cx + 28, cy + 74), val_str, font=_font(58), fill=(255, 255, 255))
+            unit = "грн" if code != "BTC" else ""
+            if unit:
+                w_val = draw.textlength(val_str, font=_font(58))
+                draw.text((cx + 36 + w_val, cy + 100), unit, font=_font(28), fill=(160, 175, 205))
+            arrow, a_color = _arrow(val, prev_rates.get(code))
+            if arrow:
+                delta = val - prev_rates.get(code, val)
+                delta_str = f"{arrow} {abs(delta):.2f}" if code != "BTC" else arrow
+                draw.text((cx + card_w - 28, cy + 88), delta_str, font=_font(34), fill=a_color, anchor="rm")
+        else:
+            draw.text((cx + 28, cy + 84), "—", font=_font(58), fill=(90, 105, 140))
+    y0 += 2 * card_h + 24 + 44
 
-    # Цього дня
+    # --- Секція ЦЬОГО ДНЯ: одна панель зі списком ---
     if observances:
-        draw.text((m, y), "ЦЬОГО ДНЯ ВІДЗНАЧАЮТЬ", font=_font(38), fill=(255, 197, 0))
-        y += 64
-        item_f = _font(32)
-        for obs in observances[:5]:
-            for j, line in enumerate(_wrap(draw, obs, item_f, Wc - 2 * m - 40)[:2]):
+        draw.text((m, y0), "ЦЬОГО ДНЯ ВІДЗНАЧАЮТЬ", font=_font(40), fill=(255, 197, 0))
+        y0 += 62
+        panel_bottom = Hc - 44
+        _panel(draw, [m, y0, Wc - m, panel_bottom])
+        ty = y0 + 30
+        item_f = _font(30)
+        for obs in observances[:4]:
+            for j, line in enumerate(_wrap(draw, obs, item_f, Wc - 2 * m - 110)[:2]):
                 prefix = "»  " if j == 0 else "    "
-                draw.text((m, y), prefix + line, font=item_f, fill=(230, 236, 248))
-                y += 44
-            y += 8
-            if y > Hc - 120:
+                draw.text((m + 32, ty), prefix + line, font=item_f, fill=(230, 236, 248))
+                ty += 44
+            ty += 6
+            if ty > panel_bottom - 50:
                 break
 
-    draw.rectangle([0, Hc - 12, Wc, Hc], fill=(255, 197, 0))
+    draw.rectangle([0, Hc - 10, Wc, Hc], fill=(255, 197, 0))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=90)
     return buf.getvalue()

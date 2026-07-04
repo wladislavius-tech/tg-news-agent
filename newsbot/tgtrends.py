@@ -40,6 +40,7 @@ class TrendPost:
     views: int
     published: datetime  # aware, київський час
     url: str
+    video_url: str = ""  # пряме коротке відео з t.me CDN
 
 
 def _parse_views(raw: str) -> int:
@@ -85,9 +86,11 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
         except ValueError:
             continue
         post_id = int(m.group(1))
+        video_el = msg.select_one("video[src]")
         posts.append(TrendPost(
             channel=channel, post_id=post_id, text=text, views=views,
             published=published, url=f"https://t.me/{channel}/{post_id}",
+            video_url=video_el["src"] if video_el else "",
         ))
     return posts
 
@@ -101,7 +104,8 @@ def fetch_trends(now: datetime) -> list[TrendPost]:
             age = (now - p.published).total_seconds()
             if 0 <= age <= age_limit and p.views >= config.TREND_MIN_VIEWS:
                 trends.append(p)
-    trends.sort(key=lambda p: p.views, reverse=True)
+    # Пости з коротким відео цінніші — піднімаємо їх у черзі (×1.5 до переглядів)
+    trends.sort(key=lambda p: p.views * (1.5 if p.video_url else 1.0), reverse=True)
     return trends
 
 
@@ -119,6 +123,7 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         published=post.published,
         related_count=max(2, post.views // 10_000),
         description=post.text,
+        video_url=post.video_url,
     )
 
 
