@@ -33,6 +33,13 @@ GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.0-flas
 # Другий AI-провайдер (безкоштовний Groq): вмикається, коли Gemini без квоти
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+# Третій AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
+# GITHUB_TOKEN (потрібен permissions: models: read у workflow), без окремого ключа.
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
+GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
+
+# Чи доступний хоч один AI-провайдер (для генерації текстів)
+AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or GITHUB_TOKEN)
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"

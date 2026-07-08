@@ -93,7 +93,7 @@ def compose_post(
     ai_illustration — картинка згенерована ШІ; чесно позначаємо це у пості.
     source_url/source_name — явне посилання на джерело (для трендів з TG-каналів).
     """
-    has_ai = bool(config.GEMINI_API_KEY or config.GROQ_API_KEY)
+    has_ai = bool(config.AI_AVAILABLE)
     generated = _gemini_generate(item, sources, meta) if has_ai else None
     if generated:
         headline, body = generated
@@ -142,7 +142,7 @@ def is_same_event(title: str, alt_titles: list[str], recent_titles: list[str]) -
     деталі (місце, ім'я), і саме це дозволяє зв'язати перефразовані дублі.
     При збої AI — False (краще зрідка дубль, ніж пропущена новина).
     """
-    if not recent_titles or not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
+    if not recent_titles or not (config.AI_AVAILABLE):
         return False
     alt = "\n".join(f"  (інші видання: {t})" for t in alt_titles[:4])
     listing = "\n".join(f"- {t}" for t in recent_titles)
@@ -164,7 +164,7 @@ def is_same_event(title: str, alt_titles: list[str], recent_titles: list[str]) -
 
 def fetch_observances(day: int, month_gen: str) -> list[str]:
     """Загальновідомі пам'ятні дні на сьогодні (для ранкової картки)."""
-    if not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
+    if not (config.AI_AVAILABLE):
         return []
     data = _gemini_json(
         f"Які міжнародні, всесвітні та українські пам'ятні дні або свята відзначають "
@@ -185,7 +185,7 @@ _ZODIAC = [
 
 def compose_horoscope(date_str: str) -> str | None:
     """Гороскоп на день для всіх 12 знаків. None — якщо Gemini недоступний."""
-    if not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
+    if not (config.AI_AVAILABLE):
         return None
     signs = ", ".join(z.split()[1] for z in _ZODIAC)
     data = _gemini_json(
@@ -234,7 +234,7 @@ _DIGEST_PROMPT = """Ти — редактор українського Telegram-
 def compose_digest(titles: list[str], now_str: str) -> str:
     """Вечірній дайджест «Головне за день»."""
     lines: list[str] | None = None
-    if config.GEMINI_API_KEY or config.GROQ_API_KEY:
+    if config.AI_AVAILABLE:
         prompt = _DIGEST_PROMPT.format(
             max_lines=config.DIGEST_MAX_LINES,
             titles="\n".join(f"- {t}" for t in titles),
@@ -274,8 +274,35 @@ def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
         return None
 
 
+def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до GitHub Models (OpenAI-сумісний) — третій безкоштовний провайдер."""
+    if not config.GITHUB_TOKEN:
+        return None
+    try:
+        resp = requests.post(
+            "https://models.github.ai/inference/chat/completions",
+            headers={"Authorization": f"Bearer {config.GITHUB_TOKEN}"},
+            json={
+                "model": config.GITHUB_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_tokens": 4000,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("GitHub Models %s: %s", config.GITHUB_MODEL, exc)
+        return None
+
+
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит: Gemini (основна → резервна модель), при вичерпаній квоті — Groq."""
+    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → GitHub Models.
+
+    Кожен наступний вмикається, лише коли попередній без квоти чи впав.
+    """
     if config.GEMINI_API_KEY:
         for model in (config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL):
             gen_cfg: dict = {
@@ -294,7 +321,7 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("Gemini %s: %s", model, exc)
                 continue
-    return _groq_json(prompt, temperature)
+    return _groq_json(prompt, temperature) or _github_models_json(prompt, temperature)
 
 
 def _gemini_generate(

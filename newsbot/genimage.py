@@ -59,7 +59,7 @@ def generate_illustration(title: str, description: str) -> bytes | None:
 
 
 def _craft_scene_prompt(title: str, description: str) -> str | None:
-    if not (config.GEMINI_API_KEY or config.GROQ_API_KEY):
+    if not (config.AI_AVAILABLE):
         return None
     from . import llm
 
