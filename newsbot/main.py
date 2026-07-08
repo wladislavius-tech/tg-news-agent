@@ -241,6 +241,16 @@ def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
     ):
         return
     caption = llm.compose_digest(daily["titles"], now.strftime("%d.%m.%Y"))
+    # Повна версія дня окремою сторінкою Telegraph (Instant View + SEO)
+    if not dry_run:
+        try:
+            from . import telegraph
+            url = telegraph.publish_digest(
+                f"Головне за {now.strftime('%d.%m.%Y')}", daily["titles"])
+            if url:
+                caption += f'\n\n📖 <a href="{url}">Усі новини дня одним списком</a>'
+        except Exception:  # noqa: BLE001 — Telegraph не має валити дайджест
+            log.warning("Telegraph-сторінку не створено, публікую дайджест без неї")
     # Колаж з фото подій дня; якщо фото замало — звичайна обкладинка
     blobs: list[bytes] = []
     for url in (daily.get("image_urls") or [])[-8:]:
