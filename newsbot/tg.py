@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 
 import requests
 
@@ -21,6 +22,36 @@ def _call(method: str, *, data: dict, files: dict | None = None) -> dict:
     if not payload.get("ok"):
         raise RuntimeError(f"Telegram {method}: {payload.get('description', resp.text)}")
     return payload["result"]
+
+
+def _share_markup(message_id: int) -> str:
+    """Inline-кнопки під постом: «Поділитися» цим постом + «Підписатися».
+
+    Пересилання поста — головний органічний важіль росту в Telegram.
+    «Поділитися» відкриває діалог надсилання з посиланням саме на цей пост.
+    """
+    username = config.TELEGRAM_CHANNEL.lstrip("@")
+    post_url = f"https://t.me/{username}/{message_id}"
+    share_url = "https://t.me/share/url?url=" + quote(post_url, safe="")
+    return json.dumps({"inline_keyboard": [[
+        {"text": "📤 Поділитися", "url": share_url},
+        {"text": "➕ Підписатися", "url": config.CHANNEL_LINK},
+    ]]})
+
+
+def _add_buttons(result: dict) -> None:
+    """Додає кнопки до вже опублікованого поста. Збій — не критичний."""
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    if not message_id:
+        return
+    try:
+        _call("editMessageReplyMarkup", data={
+            "chat_id": config.TELEGRAM_CHANNEL,
+            "message_id": message_id,
+            "reply_markup": _share_markup(message_id),
+        })
+    except Exception:  # noqa: BLE001 — пост уже опубліковано, кнопки другорядні
+        pass
 
 
 def send_admin(text: str) -> None:
@@ -76,7 +107,7 @@ def send_post(
             files=files,
         )
     elif video:
-        _call(
+        result = _call(
             "sendVideo",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -86,9 +117,10 @@ def send_post(
             },
             files={"video": ("news.mp4", video, "video/mp4")},
         )
+        _add_buttons(result)
     elif youtube_url:
         # Текстовий пост з великим YouTube-прев'ю (вбудований плеєр)
-        _call(
+        result = _call(
             "sendMessage",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -99,8 +131,9 @@ def send_post(
                 ),
             },
         )
+        _add_buttons(result)
     elif image:
-        _call(
+        result = _call(
             "sendPhoto",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -109,8 +142,9 @@ def send_post(
             },
             files={"photo": ("news.jpg", image, "image/jpeg")},
         )
+        _add_buttons(result)
     else:
-        _call(
+        result = _call(
             "sendMessage",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -119,3 +153,4 @@ def send_post(
                 "link_preview_options": '{"is_disabled": true}',
             },
         )
+        _add_buttons(result)
