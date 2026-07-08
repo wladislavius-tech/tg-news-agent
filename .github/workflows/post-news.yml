@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 concurrency:
   group: news-post
@@ -39,6 +40,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_ADMIN_CHAT: ${{ secrets.TELEGRAM_ADMIN_CHAT }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ inputs.force }}" = "true" ]; then
             python -m newsbot.main --force
