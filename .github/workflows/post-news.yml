@@ -58,3 +58,36 @@ jobs:
             git pull --rebase origin ${{ github.ref_name }}
             git push
           fi
+
+  # Незалежна задача: кросспост нових постів каналу у Threads.
+  # Працює на надійному розкладі цього ж workflow (кожні 30 хв). Її збій
+  # НЕ впливає на публікацію в канал (окрема job без needs, continue-on-error).
+  crosspost:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests beautifulsoup4
+      - name: Відновити стан кросспосту
+        uses: actions/cache/restore@v4
+        with:
+          path: crosspost_state.json
+          key: crosspost-state-${{ github.run_id }}
+          restore-keys: |
+            crosspost-state-
+      - name: Кросспост у Threads
+        env:
+          THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
+          CHANNEL: News_Ukraine_world_war
+          MAX_PER_RUN: "3"
+          SEED_LAST_ID: "207"
+        run: python crosspost.py
+      - name: Зберегти стан кросспосту
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: crosspost_state.json
+          key: crosspost-state-${{ github.run_id }}
