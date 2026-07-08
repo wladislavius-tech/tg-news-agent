@@ -243,12 +243,18 @@ def _image_quality_ok(data: bytes) -> bool:
         return False
 
     thumb = img.convert("RGB").resize((64, 64))
-    colors = thumb.getcolors(64 * 64) or []
-    unique = len(colors)
-    dominant_share = max((cnt for cnt, _ in colors), default=0) / (64 * 64)
-    if unique < 200:  # плоска графіка/логотип
+    if len(thumb.getcolors(64 * 64) or []) < 200:  # зовсім плоска графіка/логотип
         return False
-    if dominant_share > 0.45 and unique < 1200:  # логотип на рівному тлі
+
+    # Концентрація палітри. Заглушки-обкладинки видань (Interfax, ua.news тощо) —
+    # суцільний фон + логотип + текст, тому кілька квантованих кольорів покривають
+    # майже все. Справжнє фото має розподілену палітру. Квантуємо, щоб згладжування
+    # країв тексту не роздувало кількість кольорів. Поріг вивірений на живих даних:
+    # заглушки дають top3 ≥ 0.65, справжні новинні фото — ≤ 0.51.
+    q = thumb.point(lambda v: (v // 48) * 48)
+    counts = sorted((c for c, _ in (q.getcolors(64 * 64) or [])), reverse=True)
+    top3_share = sum(counts[:3]) / (64 * 64)
+    if top3_share > config.IMAGE_FLAT_TOP3:
         return False
     return True
 
