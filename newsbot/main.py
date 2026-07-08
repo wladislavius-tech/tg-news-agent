@@ -59,7 +59,29 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         meta = ukrnet.ArticleMeta(description=item.description or item.title)
         src_kwargs = {"require_ai": True}
         channel = item.cluster_id.removeprefix("tg:").split("/")[0]
-        # Коротке відео тренда — найцінніше медіа
+        # Добірка кількох відео однієї теми — найцінніший формат (як у УС)
+        if len(item.video_urls) >= config.VIDEO_ALBUM_MIN:
+            videos: list[bytes] = []
+            seen_vhashes: set[str] = set()
+            for vurl in item.video_urls[: config.VIDEO_ALBUM_MAX]:
+                vid = ukrnet.download_video(vurl)
+                if not vid:
+                    continue
+                vhash = hashlib.md5(vid).hexdigest()
+                if vhash not in seen_vhashes:
+                    seen_vhashes.add(vhash)
+                    videos.append(vid)
+            if len(videos) >= config.VIDEO_ALBUM_MIN:
+                caption = llm.compose_post(
+                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
+                )
+                return caption, {"video_album": videos}
+            if len(videos) == 1:
+                caption = llm.compose_post(
+                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
+                )
+                return caption, {"video": videos[0]}
+        # Одне коротке відео тренда
         if item.video_url:
             video = ukrnet.download_video(item.video_url)
             if video:
@@ -341,7 +363,9 @@ def run(dry_run: bool, force: bool) -> None:
         if dry_run:
             print("=" * 60)
             print(caption)
-            if "video" in media:
+            if "video_album" in media:
+                print(f"[добірка відео: {len(media['video_album'])} шт]")
+            elif "video" in media:
                 print(f"[відео: {len(media['video'])} байт]")
             elif "youtube_url" in media:
                 print(f"[YouTube: {media['youtube_url']}]")

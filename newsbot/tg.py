@@ -42,8 +42,25 @@ def send_post(
     video: bytes | None = None,
     youtube_url: str = "",
     album: list[bytes] | None = None,
+    video_album: list[bytes] | None = None,
 ) -> None:
-    if album:
+    if video_album:
+        # Добірка коротких відео однієї теми (media group з відео)
+        media, files = [], {}
+        for i, vid in enumerate(video_album):
+            name = f"video{i}"
+            files[name] = (f"{name}.mp4", vid, "video/mp4")
+            entry: dict = {"type": "video", "media": f"attach://{name}"}
+            if i == 0:
+                entry["caption"] = caption
+                entry["parse_mode"] = "HTML"
+            media.append(entry)
+        _call(
+            "sendMediaGroup",
+            data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
+            files=files,
+        )
+    elif album:
         media, files = [], {}
         for i, img in enumerate(album):
             name = f"photo{i}"

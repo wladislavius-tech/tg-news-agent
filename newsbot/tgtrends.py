@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from bs4 import BeautifulSoup
@@ -40,7 +40,8 @@ class TrendPost:
     views: int
     published: datetime  # aware, київський час
     url: str
-    video_url: str = ""  # пряме коротке відео з t.me CDN
+    video_url: str = ""  # пряме коротке відео з t.me CDN (перше)
+    video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи
 
 
 def _parse_views(raw: str) -> int:
@@ -86,11 +87,20 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
         except ValueError:
             continue
         post_id = int(m.group(1))
-        video_el = msg.select_one("video[src]")
+        # t.me/s/ інколи дублює той самий <video> (десктоп+мобайл) — прибираємо
+        # дублі за іменем файлу (частина URL до "?", токен щоразу інакший)
+        video_urls, seen_files = [], set()
+        for v in msg.select("video[src]"):
+            src = v["src"]
+            key = src.split("?")[0]
+            if key not in seen_files:
+                seen_files.add(key)
+                video_urls.append(src)
         posts.append(TrendPost(
             channel=channel, post_id=post_id, text=text, views=views,
             published=published, url=f"https://t.me/{channel}/{post_id}",
-            video_url=video_el["src"] if video_el else "",
+            video_url=video_urls[0] if video_urls else "",
+            video_urls=video_urls,
         ))
     return posts
 
@@ -124,6 +134,7 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         related_count=max(2, post.views // 10_000),
         description=post.text,
         video_url=post.video_url,
+        video_urls=post.video_urls,
     )
 
 

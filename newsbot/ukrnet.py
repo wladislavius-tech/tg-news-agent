@@ -21,6 +21,7 @@ class FeedItem:
     related_count: int
     description: str = ""  # повний текст (лише для трендів з TG-каналів)
     video_url: str = ""     # пряме відео (лише для трендів з TG-каналів)
+    video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи поста
 
 
 @dataclass
