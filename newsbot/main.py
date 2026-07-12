@@ -174,10 +174,16 @@ def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
     war_day = (now.date() - WAR_START).days + 1
     current = rates_mod.fetch_rates()
     prev = (state.get("rates") or {}).get("values", {})
+    fuel = rates_mod.fetch_fuel()
+    prev_fuel = (state.get("fuel") or {}).get("values", {})
     month_gen = cover._MONTHS_GEN[now.month - 1]
     observances = llm.fetch_observances(now.day, month_gen)
 
-    card = cover.make_morning_card(now, war_day, current, prev, observances)
+    # Атмосферне фонове фото (темні тони, під затемненням); при збої — градієнт
+    background = genimage.generate_background()
+    card = cover.make_morning_card(
+        now, war_day, current, prev, fuel, prev_fuel, observances, background=background
+    )
     caption_lines = [
         "<b>☕️ Доброго ранку, підписники!</b>",
         f"Сьогодні — {now.day} {month_gen}, <b>{war_day}-й день</b> повномасштабної війни.",
@@ -203,6 +209,8 @@ def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
         log.info("Ранковий дайджест опубліковано ✔")
         state["morning_date"] = today
         state["rates"] = {"date": today, "values": current}
+        if fuel:
+            state["fuel"] = {"date": today, "values": fuel}
         state["last_post_at"] = now.isoformat()
         state_mod.save(state)
 
