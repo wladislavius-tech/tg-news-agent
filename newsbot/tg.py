@@ -36,6 +36,54 @@ def send_admin(text: str) -> None:
         pass
 
 
+# Стартова реакція під постом (прийом «живого» каналу): бот ставить одну з
+# доступних реакцій каналу. Порядок переваги — енергійні для новин.
+_SEED_PREFER = ["⚡", "🔥", "👍", "❤️", "😱", "🙏"]
+_seed_emoji: str | None = None  # кеш на час запуску (None — ще не питали)
+
+
+def _get_seed_emoji() -> str:
+    """Перша доступна емодзі-реакція каналу (з урахуванням переваги). '' — якщо немає."""
+    global _seed_emoji
+    if _seed_emoji is not None:
+        return _seed_emoji
+    _seed_emoji = ""
+    try:
+        chat = _call("getChat", data={"chat_id": config.TELEGRAM_CHANNEL})
+        available = [
+            a.get("emoji") for a in (chat.get("available_reactions") or [])
+            if a.get("type") == "emoji" and a.get("emoji")
+        ]
+        if available:
+            _seed_emoji = next((e for e in _SEED_PREFER if e in available), available[0])
+    except Exception:  # noqa: BLE001
+        pass
+    return _seed_emoji
+
+
+def _seed_reaction(message_id) -> None:
+    """Ставить стартову реакцію під постом. Будь-який збій — тихо ігнорується."""
+    emoji = _get_seed_emoji()
+    if not emoji or not message_id:
+        return
+    try:
+        _call("setMessageReaction", data={
+            "chat_id": config.TELEGRAM_CHANNEL,
+            "message_id": message_id,
+            "reaction": json.dumps([{"type": "emoji", "emoji": emoji}]),
+        })
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _first_message_id(result) -> int | None:
+    if isinstance(result, list) and result:
+        return result[0].get("message_id")
+    if isinstance(result, dict):
+        return result.get("message_id")
+    return None
+
+
 def send_post(
     caption: str,
     image: bytes | None = None,
@@ -55,7 +103,7 @@ def send_post(
                 entry["caption"] = caption
                 entry["parse_mode"] = "HTML"
             media.append(entry)
-        _call(
+        result = _call(
             "sendMediaGroup",
             data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
             files=files,
@@ -70,13 +118,13 @@ def send_post(
                 entry["caption"] = caption
                 entry["parse_mode"] = "HTML"
             media.append(entry)
-        _call(
+        result = _call(
             "sendMediaGroup",
             data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
             files=files,
         )
     elif video:
-        _call(
+        result = _call(
             "sendVideo",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -88,7 +136,7 @@ def send_post(
         )
     elif youtube_url:
         # Текстовий пост з великим YouTube-прев'ю (вбудований плеєр)
-        _call(
+        result = _call(
             "sendMessage",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -100,7 +148,7 @@ def send_post(
             },
         )
     elif image:
-        _call(
+        result = _call(
             "sendPhoto",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -110,7 +158,7 @@ def send_post(
             files={"photo": ("news.jpg", image, "image/jpeg")},
         )
     else:
-        _call(
+        result = _call(
             "sendMessage",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -119,3 +167,4 @@ def send_post(
                 "link_preview_options": '{"is_disabled": true}',
             },
         )
+    _seed_reaction(_first_message_id(result))
