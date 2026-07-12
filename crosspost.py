@@ -57,12 +57,31 @@ def fetch_posts() -> list[dict]:
     return posts
 
 
-def format_body(text: str, limit: int) -> str:
+# Теги для пошуку на Threads (для ранжування ваги не мають, лише дискавер)
+TAGS = "\n\n#новини #Україна #війна"
+# Префікси постів, які НЕ постимо на Threads (контент для підписників, не для стрічки)
+SKIP_PREFIXES = ("🔮", "☕️", "☕", "🌙")
+
+
+def is_news(text: str) -> bool:
+    t = text.strip()
+    if t.startswith(SKIP_PREFIXES):
+        return False
+    if "Гороскоп" in t[:40] or "Доброго ранку" in t[:40] or "Головне за" in t[:40]:
+        return False
+    return True
+
+
+def format_body(text: str, limit: int = 280) -> str:
+    """Короткий чіпкий фрагмент: заголовок+початок, обрізаний по кінцю речення."""
     text = text.split("📌")[0]
     text = " ".join(text.split())
     if len(text) <= limit:
         return text
-    cut = text[:limit - 1]
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if end >= 120:  # є пристойна межа речення — ріжемо по ній
+        return cut[:end + 1].strip()
     if " " in cut:
         cut = cut.rsplit(" ", 1)[0]
     return cut + "…"
@@ -94,32 +113,41 @@ def threads_token(state: dict) -> str | None:
     return token
 
 
+def _publish(token: str, **fields) -> str | None:
+    """Створити контейнер і опублікувати. Повертає id опублікованого поста або None."""
+    r = requests.post(f"{THREADS_API}/me/threads",
+                      data={"access_token": token, **fields}, timeout=30)
+    if r.status_code != 200 or "id" not in r.json():
+        print(f"[!] Threads create: {r.status_code} {r.text[:200]}")
+        return None
+    creation_id = r.json()["id"]
+    for _ in range(5):
+        time.sleep(5)
+        r2 = requests.post(f"{THREADS_API}/me/threads_publish",
+                           data={"creation_id": creation_id, "access_token": token}, timeout=30)
+        if r2.status_code == 200:
+            return r2.json().get("id")
+        if '"error_subcode":4279009' in r2.text or 'is_transient":true' in r2.text:
+            continue
+        print(f"[!] Threads publish: {r2.status_code} {r2.text[:200]}")
+        return None
+    return None
+
+
 def post_threads(token: str, body: str) -> bool:
-    text = f"{body}\n\nПовна стрічка новин: {CHANNEL_URL}"
+    """Головний пост — БЕЗ зовнішнього посилання (лінк у тексті вбиває охоплення).
+    Посилання на канал додаємо окремою відповіддю-коментарем."""
     try:
-        r = requests.post(
-            f"{THREADS_API}/me/threads",
-            data={"media_type": "TEXT", "text": text[:500], "access_token": token},
-            timeout=30,
-        )
-        if r.status_code != 200 or "id" not in r.json():
-            print(f"[!] Threads create: {r.status_code} {r.text[:200]}")
+        post_id = _publish(token, media_type="TEXT", text=f"{body}{TAGS}"[:500])
+        if not post_id:
             return False
-        creation_id = r.json()["id"]
-        for _ in range(5):
-            time.sleep(5)
-            r2 = requests.post(
-                f"{THREADS_API}/me/threads_publish",
-                data={"creation_id": creation_id, "access_token": token},
-                timeout=30,
-            )
-            if r2.status_code == 200:
-                return True
-            if '"error_subcode":4279009' in r2.text or 'is_transient":true' in r2.text:
-                continue
-            print(f"[!] Threads publish: {r2.status_code} {r2.text[:200]}")
-            return False
-        return False
+        # Лінк — у відповідь (best-effort): зберігає охоплення головного поста
+        try:
+            _publish(token, media_type="TEXT", reply_to_id=post_id,
+                     text=f"🔗 Повна стрічка новин: {CHANNEL_URL}")
+        except requests.RequestException:
+            pass
+        return True
     except requests.RequestException as e:
         print(f"[!] Threads: {e}")
         return False
@@ -138,27 +166,35 @@ def main() -> None:
     fresh = sorted((p for p in posts if p["id"] > state["last_posted_id"]),
                    key=lambda p: p["id"])
     if state["last_posted_id"] == 0:
-        fresh = fresh[-MAX_PER_RUN:]
-    fresh = fresh[:MAX_PER_RUN]
+        fresh = fresh[-8:]  # перший запуск — вікно останніх, без заливу архіву
 
     if not fresh:
         print("Нових постів немає.")
         save_state(state)
         return
 
+    posted = 0
     for p in fresh:
-        body = format_body(p["text"], 400)
+        if posted >= MAX_PER_RUN:
+            break
+        if not is_news(p["text"]):
+            # гороскоп/ранкова картка/дайджест — на Threads не постимо, просто йдемо далі
+            state["last_posted_id"] = p["id"]
+            save_state(state)
+            continue
+        body = format_body(p["text"])
         print(f"Пост {p['id']}: {body[:60]}...")
         if post_threads(token, body):
             print("  Threads: опубліковано")
             state["last_posted_id"] = p["id"]
             save_state(state)
+            posted += 1
             time.sleep(3)
         else:
             print("  Threads: помилка — спробую наступного разу")
             break
     save_state(state)
-    print("Готово.")
+    print(f"Готово. Опубліковано новин: {posted}")
 
 
 if __name__ == "__main__":
