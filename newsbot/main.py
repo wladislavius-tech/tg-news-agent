@@ -315,8 +315,10 @@ def run(dry_run: bool, force: bool) -> None:
         return
 
     # Семантичний фільтр дублів: перефразовані заголовки тієї ж події.
-    # Для контексту беремо заголовки інших видань з кластера новини.
-    recent = state["posted_titles"][-15:]
+    # Порівнюємо проти ВСІХ заголовків за сьогодні (+ хвіст на межі доби), а не
+    # лише останніх 15 — інакше дубль за кілька годин випадає з вікна перевірки.
+    todays = (state.get("daily") or {}).get("titles", [])
+    recent = list(dict.fromkeys(todays + state["posted_titles"][-10:]))[-50:]
     filtered = []
     for cand in candidates[:2]:
         alt_titles: list[str] = []
