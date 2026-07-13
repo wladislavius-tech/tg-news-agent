@@ -34,6 +34,24 @@ def allowed_to_post(now: datetime, elapsed_min: float, top_score: int) -> bool:
     return elapsed_min >= needed
 
 
+def _news_score(it: ukrnet.FeedItem, now: datetime) -> float:
+    """Пріоритет новини = свіжість + важливість. Ми новинний канал, тож свіжа
+    подія не має чекати, доки її розтиражують видання."""
+    age_min = (now - it.published).total_seconds() / 60
+    if age_min <= 20:
+        fresh = 45
+    elif age_min <= 45:
+        fresh = 28
+    elif age_min <= 75:
+        fresh = 15
+    elif age_min <= 120:
+        fresh = 6
+    else:
+        fresh = 0
+    importance = min(it.related_count, 45)  # cap, щоб 400 публікацій не домінували
+    return fresh + importance
+
+
 def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) -> list[ukrnet.FeedItem]:
     max_age = timedelta(hours=config.MAX_AGE_HOURS)
     fresh = [
@@ -42,7 +60,7 @@ def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) ->
         and now - it.published <= max_age
         and not state_mod.is_duplicate(state, it.cluster_id, it.title)
     ]
-    fresh.sort(key=lambda it: (it.related_count, it.published), reverse=True)
+    fresh.sort(key=lambda it: _news_score(it, now), reverse=True)
     return fresh
 
 
