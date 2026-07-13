@@ -30,6 +30,16 @@ _TAIL_RE = re.compile(
     r"(ТРУХА|Надіслати новину|Підписатися|Прислать новость|支持).*$",
     re.IGNORECASE | re.DOTALL,
 )
+# Літери, унікальні для російської (ыэъё), та для української (іїєґ)
+_RU_ONLY = re.compile(r"[ыэъё]", re.IGNORECASE)
+_UA_ONLY = re.compile(r"[іїєґ]", re.IGNORECASE)
+
+
+def _looks_russian(text: str) -> bool:
+    """Пост переважно російською (цитата ворога тощо) — не для укр. каналу."""
+    ru = len(_RU_ONLY.findall(text))
+    ua = len(_UA_ONLY.findall(text))
+    return ru >= 3 and ru > ua
 
 
 @dataclass
@@ -75,7 +85,7 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
             continue
         text_el = msg.select_one(".tgme_widget_message_text")
         text = clean_text(text_el.get_text(" ", strip=True)) if text_el else ""
-        if len(text) < config.TREND_MIN_TEXT or _AD_RE.search(text):
+        if len(text) < config.TREND_MIN_TEXT or _AD_RE.search(text) or _looks_russian(text):
             continue
         views_el = msg.select_one(".tgme_widget_message_views")
         views = _parse_views(views_el.get_text(strip=True)) if views_el else 0
@@ -105,14 +115,26 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
     return posts
 
 
-def fetch_trends(now: datetime) -> list[TrendPost]:
-    """Гарячі свіжі пости всіх каналів-джерел, найпопулярніші першими."""
-    age_limit = config.TREND_MAX_AGE_HOURS * 3600
+def fetch_trends(
+    now: datetime,
+    *,
+    video_only: bool = False,
+    max_age_hours: int | None = None,
+    min_views: int | None = None,
+) -> list[TrendPost]:
+    """Гарячі свіжі пости всіх каналів-джерел, найпопулярніші першими.
+
+    video_only — лише пости з відео (для квоти відео, з м'якшими порогами).
+    """
+    age_limit = (max_age_hours or config.TREND_MAX_AGE_HOURS) * 3600
+    min_v = min_views if min_views is not None else config.TREND_MIN_VIEWS
     trends: list[TrendPost] = []
     for channel in config.TREND_CHANNELS:
         for p in fetch_channel(channel, now):
+            if video_only and not p.video_urls:
+                continue
             age = (now - p.published).total_seconds()
-            if 0 <= age <= age_limit and p.views >= config.TREND_MIN_VIEWS:
+            if 0 <= age <= age_limit and p.views >= min_v:
                 trends.append(p)
     # Пости з коротким відео цінніші — піднімаємо їх у черзі (×1.5 до переглядів)
     trends.sort(key=lambda p: p.views * (1.5 if p.video_url else 1.0), reverse=True)

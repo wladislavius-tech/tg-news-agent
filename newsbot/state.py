@@ -18,7 +18,7 @@ def load() -> dict:
     state.setdefault("posted_ids", [])
     state.setdefault("posted_titles", [])
     state.setdefault("last_post_at", None)
-    state.setdefault("daily", {"date": "", "titles": []})
+    state.setdefault("daily", {"date": "", "titles": [], "videos": 0})
     state.setdefault("digest_date", "")
     state.setdefault("morning_date", "")
     state.setdefault("horoscope_date", "")
@@ -64,20 +64,35 @@ def is_duplicate(state: dict, cluster_id: str, title: str) -> bool:
 
 
 def remember_post(
-    state: dict, cluster_id: str, title: str, now: datetime, image_url: str = ""
+    state: dict, cluster_id: str, title: str, now: datetime,
+    image_url: str = "", is_video: bool = False,
 ) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
     state["last_post_at"] = now.isoformat()
-    # Заголовки і фото дня — для вечірнього дайджесту та його колажу
+    # Заголовки, фото і лічильник відео дня — для дайджесту, колажу та квоти відео
     today = now.date().isoformat()
     daily = state["daily"]
     if daily.get("date") != today:
         daily["date"] = today
         daily["titles"] = []
         daily["image_urls"] = []
+        daily["videos"] = 0
     daily["titles"].append(title)
     daily["titles"] = daily["titles"][-60:]
     if image_url:
         daily.setdefault("image_urls", []).append(image_url)
         daily["image_urls"] = daily["image_urls"][-12:]
+    if is_video:
+        daily["videos"] = daily.get("videos", 0) + 1
+
+
+def video_share_today(state: dict, now: datetime) -> tuple[int, float]:
+    """(кількість постів сьогодні, частка відео серед них)."""
+    daily = state.get("daily") or {}
+    if daily.get("date") != now.date().isoformat():
+        return 0, 0.0
+    posts = len(daily.get("titles", []))
+    if posts == 0:
+        return 0, 0.0
+    return posts, daily.get("videos", 0) / posts

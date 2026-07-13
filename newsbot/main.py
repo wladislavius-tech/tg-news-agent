@@ -314,6 +314,26 @@ def run(dry_run: bool, force: bool) -> None:
         log.info("Нових новин, вартих поста, немає")
         return
 
+    # Квота на відео: якщо частка відео за день нижча за цільову, свідомо ставимо
+    # відео-сюжет із великих TG-каналів першим (навіть коли Укрнет має новини).
+    posts_today, vshare = state_mod.video_share_today(state, now)
+    if not first_run and posts_today >= config.VIDEO_QUOTA_MIN_POSTS and vshare < config.VIDEO_TARGET_SHARE:
+        recent_titles = (state.get("daily") or {}).get("titles", [])[-20:]
+        video_trends = tgtrends.fetch_trends(
+            now, video_only=True,
+            max_age_hours=config.VIDEO_TREND_MAX_AGE_HOURS,
+            min_views=config.VIDEO_TREND_MIN_VIEWS,
+        )
+        for trend in video_trends:
+            vit = tgtrends.to_feed_item(trend)
+            if state_mod.is_duplicate(state, vit.cluster_id, vit.title):
+                continue
+            if recent_titles and llm.is_same_event(vit.title, [], recent_titles):
+                continue
+            candidates.insert(0, vit)
+            log.info("Квота відео (частка %.0f%%): беру відео-сюжет %r", vshare * 100, vit.title)
+            break
+
     # Семантичний фільтр дублів: перефразовані заголовки тієї ж події.
     # Порівнюємо проти ВСІХ заголовків за сьогодні (+ хвіст на межі доби), а не
     # лише останніх 15 — інакше дубль за кілька годин випадає з вікна перевірки.
@@ -381,8 +401,23 @@ def run(dry_run: bool, force: bool) -> None:
         try:
             caption, media = build_post(item, now)
         except Exception:
-            log.exception("Не вдалося зібрати пост, пропускаю")
-            continue
+            log.exception("Не вдалося зібрати пост")
+            # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
+            # беремо звичайну новину Укрнету, яка може вийти й без AI
+            fallback = next(
+                (c for c in candidates
+                 if not c.cluster_id.startswith("tg:") and c not in chosen),
+                None,
+            )
+            if not fallback:
+                continue
+            log.info("Відкат на новину Укрнету: %r", fallback.title)
+            try:
+                caption, media = build_post(fallback, now)
+                item = fallback
+            except Exception:
+                log.exception("Відкат теж не вдався, пропускаю")
+                continue
         img_url = media.pop("_img_url", "")
         if dry_run:
             print("=" * 60)
@@ -400,7 +435,10 @@ def run(dry_run: bool, force: bool) -> None:
         else:
             tg.send_post(caption, **media)
             log.info("Опубліковано ✔")
-        state_mod.remember_post(state, item.cluster_id, item.title, now, image_url=img_url)
+        is_video = "video" in media or "video_album" in media
+        state_mod.remember_post(
+            state, item.cluster_id, item.title, now, image_url=img_url, is_video=is_video
+        )
         if not dry_run:
             state_mod.save(state)
 
