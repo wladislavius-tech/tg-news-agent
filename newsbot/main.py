@@ -108,7 +108,10 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                 )
                 return caption, {"video": video}
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
-        image = genimage.generate_illustration(item.title, meta.description)
+        # Фото самого поста (консенсус-новини) — «підходяща картинка»; далі AI-ілюстрація
+        image = ukrnet.download_image(item.image_url) if item.image_url else None
+        if image is None:
+            image = genimage.generate_illustration(item.title, meta.description)
         if image:
             return caption, {"image": image}
         return caption, {"image": cover.make_cover(item.title, now)}
@@ -313,6 +316,23 @@ def run(dry_run: bool, force: bool) -> None:
     items = ukrnet.fetch_feed(now)
     log.info("Стрічка: %d новин", len(items))
     candidates = pick_candidates(items, state, now)
+
+    # Консенсус каналів-гігантів (Труха/УС/ОКО) — термінова важлива подія.
+    # Публікуємо НЕВІДКЛАДНО, обходячи інтервал між постами.
+    urgent = False
+    if not first_run:
+        consensus = tgtrends.find_consensus(now)
+        if consensus and not state_mod.is_duplicate(state, consensus.cluster_id, consensus.title):
+            recent = (state.get("daily") or {}).get("titles", [])[-20:]
+            if not (recent and llm.is_same_event(consensus.title, [], recent)):
+                # Якщо ця ж подія вже є на Укрнеті — беремо укрнетівський кластер
+                # (буде фото й описи видань); інакше постимо сам консенсус-пост.
+                matched = tgtrends.match_feed_item(consensus.description or consensus.title, items)
+                pick = matched if matched else consensus
+                candidates = [pick] + [c for c in candidates if c.cluster_id != pick.cluster_id]
+                urgent = True
+                log.info("КОНСЕНСУС гігантів — невідкладний пост: %r", pick.title)
+
     if not candidates:
         # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст).
         # Якщо ця ж подія є на Укрнеті — постимо укрнетівський кластер:
@@ -380,7 +400,8 @@ def run(dry_run: bool, force: bool) -> None:
 
     top = candidates[0]
     elapsed = state_mod.minutes_since_last_post(state, now)
-    if not force and not allowed_to_post(now, elapsed, top.related_count):
+    # urgent (консенсус гігантів) обходить інтервал — публікуємо невідкладно
+    if not force and not urgent and not allowed_to_post(now, elapsed, top.related_count):
         log.info(
             "Ще рано постити (минуло %.0f хв, топ-новина: %r, %d публікацій)",
             elapsed, top.title, top.related_count,

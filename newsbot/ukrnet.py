@@ -22,6 +22,7 @@ class FeedItem:
     description: str = ""  # повний текст (лише для трендів з TG-каналів)
     video_url: str = ""     # пряме відео (лише для трендів з TG-каналів)
     video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи поста
+    image_url: str = ""     # фото поста (для консенсус-новин з TG-каналів)
 
 
 @dataclass

@@ -52,6 +52,7 @@ class TrendPost:
     url: str
     video_url: str = ""  # пряме коротке відео з t.me CDN (перше)
     video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи
+    image_url: str = ""  # фото поста (для консенсус-новин)
 
 
 def _parse_views(raw: str) -> int:
@@ -106,11 +107,19 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
             if key not in seen_files:
                 seen_files.add(key)
                 video_urls.append(src)
+        # Фото поста лежить у style="background-image:url('...')"
+        image_url = ""
+        photo = msg.select_one(".tgme_widget_message_photo_wrap")
+        if photo and photo.get("style"):
+            mimg = re.search(r"background-image:url\('([^']+)'\)", photo["style"])
+            if mimg:
+                image_url = mimg.group(1)
         posts.append(TrendPost(
             channel=channel, post_id=post_id, text=text, views=views,
             published=published, url=f"https://t.me/{channel}/{post_id}",
             video_url=video_urls[0] if video_urls else "",
             video_urls=video_urls,
+            image_url=image_url,
         ))
     return posts
 
@@ -157,10 +166,68 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         description=post.text,
         video_url=post.video_url,
         video_urls=post.video_urls,
+        image_url=post.image_url,
     )
 
 
 _MATCH_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
+
+
+def _sig_words(text: str) -> set[str]:
+    return {w.lower() for w in _MATCH_WORD_RE.findall(text)}
+
+
+def _same_topic(words_a: set[str], words_b: set[str]) -> bool:
+    """Чи два пости про ту саму подію — за перетином значущих слів."""
+    if not words_a or not words_b:
+        return False
+    overlap = words_a & words_b
+    return len(overlap) >= 4 and len(overlap) / min(len(words_a), len(words_b)) >= 0.28
+
+
+def find_consensus(now: datetime) -> FeedItem | None:
+    """Новина, яку СИНХРОННО опублікували кілька каналів-гігантів (Труха, УС, ОКО).
+    Це сильний сигнал термінової важливої події — постимо невідкладно.
+
+    Повертає FeedItem найкращого поста (з фото/відео, найбільше переглядів) або None.
+    """
+    window = config.CONSENSUS_AGE_MIN * 60
+    groups: dict[str, list[TrendPost]] = {}
+    for ch in config.CONSENSUS_CHANNELS:
+        groups[ch] = [
+            p for p in fetch_channel(ch, now)
+            if 0 <= (now - p.published).total_seconds() <= window
+        ]
+
+    best: TrendPost | None = None
+    best_key = (-1, 0)  # (кількість каналів, перегляди)
+    for ch_a, posts_a in groups.items():
+        for pa in posts_a:
+            words_a = _sig_words(pa.text)
+            hits = {ch_a: pa}
+            for ch_b, posts_b in groups.items():
+                if ch_b == ch_a:
+                    continue
+                match = next((pb for pb in posts_b if _same_topic(words_a, _sig_words(pb.text))), None)
+                if match:
+                    hits[ch_b] = match
+                    posts_b.remove(match)  # не рахувати той самий пост двічі
+            if len(hits) >= config.CONSENSUS_MIN:
+                # Словесний матчинг дає хибні збіги для тематично близьких, але РІЗНИХ
+                # новин. Підтверджуємо через AI, що це справді та сама подія.
+                from . import llm
+
+                others = [p.text[:200] for ch, p in hits.items() if ch != ch_a]
+                if not llm.is_same_event(pa.text[:200], [], others):
+                    continue
+                winner = max(
+                    hits.values(),
+                    key=lambda p: (bool(p.video_urls or p.image_url), p.views),
+                )
+                key = (len(hits), winner.views)
+                if key > best_key:
+                    best, best_key = winner, key
+    return to_feed_item(best) if best else None
 
 
 def match_feed_item(trend_text: str, items: list[FeedItem]) -> FeedItem | None:
