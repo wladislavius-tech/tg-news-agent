@@ -185,6 +185,37 @@ def _same_topic(words_a: set[str], words_b: set[str]) -> bool:
     return len(overlap) >= 4 and len(overlap) / min(len(words_a), len(words_b)) >= 0.28
 
 
+_KYIV_RE = re.compile(r"київ|києв|столиц|кмва|кличко", re.IGNORECASE)
+_THREAT_RE = re.compile(
+    r"ппо|обстріл|атак|ракет|балісти|шахед|дрон|вибух|тривог|укритт|удар|приліт|"
+    r"кабом|запуск|загроз",
+    re.IGNORECASE,
+)
+_SOURCE_RE = re.compile(r"кличко|кмва|квд|повітрян", re.IGNORECASE)  # авторитетне джерело
+
+
+def find_kyiv_alert(now: datetime) -> FeedItem | None:
+    """Свіжий пост про повітряну загрозу/обстріл Києва в каналах-гігантах.
+
+    Такі новини (особливо від Кличка чи КМВА) — обов'язкові й невідкладні.
+    Достатньо ОДНОГО каналу (на відміну від консенсусу). Пріоритет — постам
+    з авторитетним джерелом і найбільше переглядів.
+    """
+    window = config.KYIV_ALERT_AGE_MIN * 60
+    best: TrendPost | None = None
+    best_key = (-1, 0)
+    for ch in config.CONSENSUS_CHANNELS:
+        for p in fetch_channel(ch, now):
+            if (now - p.published).total_seconds() > window:
+                continue
+            if not (_KYIV_RE.search(p.text) and _THREAT_RE.search(p.text)):
+                continue
+            key = (1 if _SOURCE_RE.search(p.text) else 0, p.views)
+            if key > best_key:
+                best, best_key = p, key
+    return to_feed_item(best) if best else None
+
+
 def find_consensus(now: datetime) -> FeedItem | None:
     """Новина, яку СИНХРОННО опублікували кілька каналів-гігантів (Труха, УС, ОКО).
     Це сильний сигнал термінової важливої події — постимо невідкладно.

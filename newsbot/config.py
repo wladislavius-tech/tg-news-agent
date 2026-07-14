@@ -133,6 +133,9 @@ CONSENSUS_CHANNELS = ["truexanewsua", "u_now", "oko_ua"]  # Труха, УС, В
 CONSENSUS_MIN = 2           # мінімум каналів з однаковою новиною (з 3)
 CONSENSUS_AGE_MIN = 20      # вікно синхронності, хвилин
 
+# --- Алерт Києва: обстріл/повітряна загроза столиці — обов'язково й невідкладно ---
+KYIV_ALERT_AGE_MIN = 30     # свіжість поста-алерту, хвилин
+
 # --- Стан ---
 STATE_FILE = ROOT / "state.json"
 MAX_REMEMBERED_IDS = 500

@@ -185,6 +185,28 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
 WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
 
 
+def maybe_post_kyiv_alert(state: dict, now: datetime, dry_run: bool) -> bool:
+    """Обстріл/повітряна загроза Києву — обов'язковий невідкладний пост (сухо, текстом).
+    Повертає True, якщо алерт опубліковано (тоді решту постингу цього запуску пропускаємо)."""
+    alert = tgtrends.find_kyiv_alert(now)
+    if not alert or state_mod.is_duplicate(state, alert.cluster_id, alert.title):
+        return False
+    recent = (state.get("daily") or {}).get("titles", [])[-20:]
+    if recent and llm.is_same_event(alert.title, [], recent):
+        return False  # цей факт уже постили (оновлення-розвиток пройде як не-дубль)
+    caption = llm.compose_alert(alert.description or alert.title)
+    if dry_run:
+        print("=" * 60)
+        print("[АЛЕРТ КИЄВА — текст без картинки]")
+        print(caption)
+        return True
+    tg.send_post(caption)  # текстовий пост, без картинки
+    log.info("АЛЕРТ Києва опубліковано ✔: %r", alert.title)
+    state_mod.remember_post(state, alert.cluster_id, alert.title, now)
+    state_mod.save(state)
+    return True
+
+
 def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
     """О 07:xx публікує ранкову картку: дата, день війни, курси, пам'ятні дні."""
     today = now.date().isoformat()
@@ -308,6 +330,10 @@ def run(dry_run: bool, force: bool) -> None:
     now = datetime.now(KYIV)
     state = state_mod.load()
     first_run = not state["posted_ids"] and not state.get("last_post_at")
+
+    # Обстріл Києва — найвищий пріоритет: якщо є алерт, публікуємо тільки його
+    if not first_run and maybe_post_kyiv_alert(state, now, dry_run):
+        return
 
     maybe_post_morning(state, now, dry_run)
     maybe_post_horoscope(state, now, dry_run)

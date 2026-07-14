@@ -135,6 +135,29 @@ def compose_post(
     return caption
 
 
+def compose_alert(text: str) -> str:
+    """Короткий сухий пост-алерт про обстріл/загрозу Києву (текст, без картинки)."""
+    headline, body = "❗️ Повітряна загроза для Києва", text[:400]
+    if config.AI_AVAILABLE:
+        data = _gemini_json(
+            "Це термінове повідомлення про повітряну загрозу або обстріл Києва для "
+            "новинного каналу. Стисни у СУХИЙ короткий пост без емоцій і води: "
+            "headline — один рядок, почни з ❗️; body — 1–3 дуже короткі речення, лише "
+            "факти (що, де, скільки, джерело). «росія», «рф» — з малої. Не вигадуй нічого. "
+            "Матеріал:\n" + text[:1200] + '\n\nВідповідай JSON: {"headline": "...", "body": "..."}',
+            temperature=0.2,
+        )
+        if data and str(data.get("headline", "")).strip() and str(data.get("body", "")).strip():
+            headline = str(data["headline"]).strip()
+            body = str(data["body"]).strip()
+
+    parts = [f"<b>{_md_bold_strip(headline)}</b>", _md_bold_to_html(body)]
+    parts.append(
+        f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
+    )
+    return "\n\n".join(parts)
+
+
 def is_same_event(title: str, alt_titles: list[str], recent_titles: list[str]) -> bool:
     """Семантична перевірка на дубль: чи нова новина про ту саму подію, що недавні пости.
 
