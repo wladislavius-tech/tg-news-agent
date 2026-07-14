@@ -18,6 +18,7 @@ def load() -> dict:
     state.setdefault("posted_ids", [])
     state.setdefault("posted_titles", [])
     state.setdefault("last_post_at", None)
+    state.setdefault("last_regular_post_at", None)
     state.setdefault("daily", {"date": "", "titles": [], "videos": 0})
     state.setdefault("digest_date", "")
     state.setdefault("morning_date", "")
@@ -39,6 +40,15 @@ def minutes_since_last_post(state: dict, now: datetime) -> float:
     if not state.get("last_post_at"):
         return 1e9
     last = datetime.fromisoformat(state["last_post_at"])
+    return (now - last).total_seconds() / 60
+
+
+def minutes_since_regular_post(state: dict, now: datetime) -> float:
+    """Хвилин від останньої ЗВИЧАЙНОЇ новини. Алерти/консенсус/рубрики цей
+    таймер не чіпають — звичайні новини мають незалежний розклад."""
+    if not state.get("last_regular_post_at"):
+        return 1e9
+    last = datetime.fromisoformat(state["last_regular_post_at"])
     return (now - last).total_seconds() / 60
 
 
@@ -65,11 +75,14 @@ def is_duplicate(state: dict, cluster_id: str, title: str) -> bool:
 
 def remember_post(
     state: dict, cluster_id: str, title: str, now: datetime,
-    image_url: str = "", is_video: bool = False,
+    image_url: str = "", is_video: bool = False, is_regular: bool = False,
 ) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
     state["last_post_at"] = now.isoformat()
+    if is_regular:
+        # Окремий таймер звичайних новин — не зсувається алертами/консенсусом
+        state["last_regular_post_at"] = now.isoformat()
     # Заголовки, фото і лічильник відео дня — для дайджесту, колажу та квоти відео
     today = now.date().isoformat()
     daily = state["daily"]

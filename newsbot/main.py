@@ -323,6 +323,58 @@ def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
         state_mod.save(state)
 
 
+def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
+                  dry_run: bool, is_regular: bool) -> bool:
+    """Збирає й публікує один пост. Повертає True при успіху.
+    is_regular=True оновлює таймер звичайних новин; термінові пости — False."""
+    try:
+        caption, media = build_post(item, now)
+    except Exception:
+        log.exception("Не вдалося зібрати пост: %r", item.title)
+        return False
+    img_url = media.pop("_img_url", "")
+    if dry_run:
+        print("=" * 60)
+        print(caption)
+        if "video_album" in media:
+            print(f"[добірка відео: {len(media['video_album'])} шт]")
+        elif "video" in media:
+            print(f"[відео: {len(media['video'])} байт]")
+        elif "youtube_url" in media:
+            print(f"[YouTube: {media['youtube_url']}]")
+        elif "album" in media:
+            print(f"[альбом: {len(media['album'])} фото]")
+        else:
+            print(f"[картинка: {len(media['image'])} байт]")
+    else:
+        tg.send_post(caption, **media)
+        log.info("Опубліковано ✔: %r", item.title)
+    is_video = "video" in media or "video_album" in media
+    state_mod.remember_post(
+        state, item.cluster_id, item.title, now,
+        image_url=img_url, is_video=is_video, is_regular=is_regular,
+    )
+    if not dry_run:
+        state_mod.save(state)
+    return True
+
+
+def maybe_post_consensus(state: dict, now: datetime, dry_run: bool, items: list) -> None:
+    """Консенсус гігантів — термінова подія, публікуємо негайно. НЕ чіпає таймер
+    звичайних новин (is_regular=False), тож їхній розклад лишається незалежним."""
+    consensus = tgtrends.find_consensus(now)
+    if not consensus or state_mod.is_duplicate(state, consensus.cluster_id, consensus.title):
+        return
+    recent = (state.get("daily") or {}).get("titles", [])[-20:]
+    if recent and llm.is_same_event(consensus.title, [], recent):
+        return
+    # Якщо ця ж подія вже є на Укрнеті — беремо укрнетівський кластер (фото й описи видань)
+    matched = tgtrends.match_feed_item(consensus.description or consensus.title, items)
+    pick = matched or consensus
+    log.info("КОНСЕНСУС гігантів — невідкладний пост: %r", pick.title)
+    _publish_item(state, pick, now, dry_run, is_regular=False)
+
+
 def run(dry_run: bool, force: bool) -> None:
     if not dry_run and (not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHANNEL):
         sys.exit("Не задано TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL (див. .env.example)")
@@ -331,33 +383,24 @@ def run(dry_run: bool, force: bool) -> None:
     state = state_mod.load()
     first_run = not state["posted_ids"] and not state.get("last_post_at")
 
-    # Обстріл Києва — найвищий пріоритет: якщо є алерт, публікуємо тільки його
-    if not first_run and maybe_post_kyiv_alert(state, now, dry_run):
-        return
+    # --- Термінові пости: публікуються негайно, НЕ зсувають розклад звичайних ---
+    # (алерт Києва й консенсус гігантів не чіпають таймер звичайних новин)
+    if not first_run:
+        maybe_post_kyiv_alert(state, now, dry_run)
 
+    # --- Рубрики за своїм часом ---
     maybe_post_morning(state, now, dry_run)
     maybe_post_horoscope(state, now, dry_run)
     maybe_post_digest(state, now, dry_run)
 
     items = ukrnet.fetch_feed(now)
     log.info("Стрічка: %d новин", len(items))
-    candidates = pick_candidates(items, state, now)
 
-    # Консенсус каналів-гігантів (Труха/УС/ОКО) — термінова важлива подія.
-    # Публікуємо НЕВІДКЛАДНО, обходячи інтервал між постами.
-    urgent = False
     if not first_run:
-        consensus = tgtrends.find_consensus(now)
-        if consensus and not state_mod.is_duplicate(state, consensus.cluster_id, consensus.title):
-            recent = (state.get("daily") or {}).get("titles", [])[-20:]
-            if not (recent and llm.is_same_event(consensus.title, [], recent)):
-                # Якщо ця ж подія вже є на Укрнеті — беремо укрнетівський кластер
-                # (буде фото й описи видань); інакше постимо сам консенсус-пост.
-                matched = tgtrends.match_feed_item(consensus.description or consensus.title, items)
-                pick = matched if matched else consensus
-                candidates = [pick] + [c for c in candidates if c.cluster_id != pick.cluster_id]
-                urgent = True
-                log.info("КОНСЕНСУС гігантів — невідкладний пост: %r", pick.title)
+        maybe_post_consensus(state, now, dry_run, items)
+
+    # --- Звичайні новини: власний незалежний розклад ---
+    candidates = pick_candidates(items, state, now)
 
     if not candidates:
         # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст).
@@ -425,11 +468,11 @@ def run(dry_run: bool, force: bool) -> None:
         return
 
     top = candidates[0]
-    elapsed = state_mod.minutes_since_last_post(state, now)
-    # urgent (консенсус гігантів) обходить інтервал — публікуємо невідкладно
-    if not force and not urgent and not allowed_to_post(now, elapsed, top.related_count):
+    # Розклад звичайних новин — за ВЛАСНИМ таймером, не зсувається алертами/консенсусом
+    elapsed = state_mod.minutes_since_regular_post(state, now)
+    if not force and not allowed_to_post(now, elapsed, top.related_count):
         log.info(
-            "Ще рано постити (минуло %.0f хв, топ-новина: %r, %d публікацій)",
+            "Ще рано постити звичайну (минуло %.0f хв, топ-новина: %r, %d публікацій)",
             elapsed, top.title, top.related_count,
         )
         return
@@ -463,49 +506,18 @@ def run(dry_run: bool, force: bool) -> None:
             log.info("Пауза %.0f хв перед наступним постом", gap / 60)
             time.sleep(gap)
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
-        try:
-            caption, media = build_post(item, now)
-        except Exception:
-            log.exception("Не вдалося зібрати пост")
-            # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
-            # беремо звичайну новину Укрнету, яка може вийти й без AI
-            fallback = next(
-                (c for c in candidates
-                 if not c.cluster_id.startswith("tg:") and c not in chosen),
-                None,
-            )
-            if not fallback:
-                continue
-            log.info("Відкат на новину Укрнету: %r", fallback.title)
-            try:
-                caption, media = build_post(fallback, now)
-                item = fallback
-            except Exception:
-                log.exception("Відкат теж не вдався, пропускаю")
-                continue
-        img_url = media.pop("_img_url", "")
-        if dry_run:
-            print("=" * 60)
-            print(caption)
-            if "video_album" in media:
-                print(f"[добірка відео: {len(media['video_album'])} шт]")
-            elif "video" in media:
-                print(f"[відео: {len(media['video'])} байт]")
-            elif "youtube_url" in media:
-                print(f"[YouTube: {media['youtube_url']}]")
-            elif "album" in media:
-                print(f"[альбом: {len(media['album'])} фото]")
-            else:
-                print(f"[картинка: {len(media['image'])} байт]")
-        else:
-            tg.send_post(caption, **media)
-            log.info("Опубліковано ✔")
-        is_video = "video" in media or "video_album" in media
-        state_mod.remember_post(
-            state, item.cluster_id, item.title, now, image_url=img_url, is_video=is_video
+        if _publish_item(state, item, now, dry_run, is_regular=True):
+            continue
+        # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
+        # беремо звичайну новину Укрнету, яка може вийти й без AI
+        fallback = next(
+            (c for c in candidates
+             if not c.cluster_id.startswith("tg:") and c not in chosen),
+            None,
         )
-        if not dry_run:
-            state_mod.save(state)
+        if fallback:
+            log.info("Відкат на новину Укрнету: %r", fallback.title)
+            _publish_item(state, fallback, now, dry_run, is_regular=True)
 
 
 def main() -> None:
