@@ -72,6 +72,23 @@ def is_news(text: str) -> bool:
     return True
 
 
+# Новини про удари УКРАЇНИ У ВІДПОВІДЬ по цілях на рф (танкери, НПЗ, аеродроми
+# тощо) стабільно дають помітно більше лайків, ніж типовий пост (7-12 проти
+# 1-2, спостереження 2026-07-25, вибірка поки мала — переглянути, коли
+# з'являться детальні перегляди по постах від 100 підписників). Такий
+# контент піднімаємо в черзі кросспосту й додаємо профільний тег.
+_STRIKE_VERB_RE = re.compile(r"вразил|уразил|уражен|знищ|завдал.{0,15}удар", re.IGNORECASE)
+_RU_TARGET_RE = re.compile(
+    r"\bрф\b|росі|нафтопереробн|нпз\b|танкер|аеродром|пускову установку|"
+    r"с-?400|переправ|окупант|катер",
+    re.IGNORECASE,
+)
+
+
+def is_strike_news(text: str) -> bool:
+    return bool(_STRIKE_VERB_RE.search(text) and _RU_TARGET_RE.search(text))
+
+
 def format_body(text: str, limit: int = 280) -> str:
     """Короткий чіпкий фрагмент: заголовок+початок, обрізаний по кінцю речення."""
     text = text.split("📌")[0]
@@ -134,11 +151,12 @@ def _publish(token: str, **fields) -> str | None:
     return None
 
 
-def post_threads(token: str, body: str) -> bool:
+def post_threads(token: str, body: str, extra_tag: str = "") -> bool:
     """Головний пост — БЕЗ зовнішнього посилання (лінк у тексті вбиває охоплення).
     Посилання на канал додаємо окремою відповіддю-коментарем."""
     try:
-        post_id = _publish(token, media_type="TEXT", text=f"{body}{TAGS}"[:500])
+        tags = f"{TAGS} {extra_tag}" if extra_tag else TAGS
+        post_id = _publish(token, media_type="TEXT", text=f"{body}{tags}"[:500])
         if not post_id:
             return False
         # Лінк — у відповідь (best-effort): зберігає охоплення головного поста
@@ -167,6 +185,10 @@ def main() -> None:
                    key=lambda p: p["id"])
     if state["last_posted_id"] == 0:
         fresh = fresh[-8:]  # перший запуск — вікно останніх, без заливу архіву
+    # Порядок публікації лишається строго хронологічним (last_posted_id — це
+    # водяний знак; переставляти чергу небезпечно — понизить його і призведе
+    # або до повторної публікації, або до тихого пропуску старіших постів).
+    # "Ударні" новини піднімаємо не порядком, а тегом — див. is_strike_news нижче.
 
     if not fresh:
         print("Нових постів немає.")
@@ -183,8 +205,9 @@ def main() -> None:
             save_state(state)
             continue
         body = format_body(p["text"])
-        print(f"Пост {p['id']}: {body[:60]}...")
-        if post_threads(token, body):
+        extra_tag = "#контрудар" if is_strike_news(p["text"]) else ""
+        print(f"Пост {p['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}")
+        if post_threads(token, body, extra_tag):
             print("  Threads: опубліковано")
             state["last_posted_id"] = p["id"]
             save_state(state)
