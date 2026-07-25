@@ -9,3 +9,6 @@ CLAUDE.md
 nul
 tiktok_demo.py
 tiktok_demo_video.mp4
+
+tiktok/output/
+tiktok/state.json
