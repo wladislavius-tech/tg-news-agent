@@ -496,20 +496,22 @@ def run(dry_run: bool, force: bool) -> None:
         )
         return
 
-    # Зазвичай один пост за запуск; другий — лише для ДУЖЕ термінової новини,
-    # і публікується він з паузою, а не одночасно з першим.
+    # Зазвичай один пост за запуск; додаткові — лише для ДУЖЕ термінових новин
+    # (до config.MAX_POSTS_DAY/NIGHT загалом), і публікуються вони з паузою.
     limit = config.MAX_POSTS_NIGHT if is_night(now) else config.MAX_POSTS_DAY
     chosen = [top]
     if limit > 1 and not first_run:
-        # Другий пост має бути гарячим І не дублем першого (велика подія часто
-        # дає кілька кластерів про той самий факт — постимо лише один).
-        for cand in candidates[1:4]:
+        # Кожен додатковий пост має бути гарячим І не дублем уже обраних (велика
+        # подія часто дає кілька кластерів про той самий факт — постимо лише один).
+        for cand in candidates[1:5]:
+            if len(chosen) >= limit:
+                break
             if cand.related_count < config.SECOND_POST_THRESHOLD:
                 break  # кандидати відсортовані за related — далі лише менші
-            if not llm.is_same_event(cand.title, [], [top.title]):
-                chosen.append(cand)
-                break
-            log.info("Другий пост — дубль першого, пропускаю: %r", cand.title)
+            if llm.is_same_event(cand.title, [], [c.title for c in chosen]):
+                log.info("Додатковий пост — дубль уже обраного, пропускаю: %r", cand.title)
+                continue
+            chosen.append(cand)
     if first_run:
         chosen = chosen[:1]  # перший запуск — один пост, без "зливи" старих новин
 
