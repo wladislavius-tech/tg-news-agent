@@ -242,9 +242,11 @@ _NATIONWIDE_RE = re.compile(
     r"загальнодержавн|масштабн\w*\s+(?:повітрян|трив)",
     re.IGNORECASE,
 )
-_THREAT_RE = re.compile(
-    r"ппо|обстріл|атак|ракет|балісти|шахед|дрон|вибух|тривог|укритт|удар|приліт|"
-    r"кабом|запуск|загроз",
+_ALERT_PHRASE_RE = re.compile(
+    r"повітряна тривога|повітряну тривогу|повітряної тривоги|оголошено тривогу|"
+    r"відбій тривоги|загроза балісти|загроза ракетн|загроза удар\w*|загроза бпла|"
+    r"загроза дрон|загроза застосування|загроза обстрілу|ракетна небезпека|"
+    r"ракетну небезпеку|зафіксовано пуск|повітряна небезпека|повітряну небезпеку",
     re.IGNORECASE,
 )
 _SOURCE_RE = re.compile(
@@ -266,6 +268,12 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
     прохідна згадка "Київ" чи "обстріли" в середині зовсім іншої новини
     (напр. цитата про війну в матеріалі про спорт) хибно розпізнається як
     жива загроза, а LLM потім плутає непов'язані факти в одному пості.
+
+    Окремі слова типу "дрон"/"обстріл"/"атак" НЕ вважаємо ознакою загрози —
+    вони трапляються в масі мирних новин (дипломатія, техніка, аналітика).
+    Замість цього шукаємо СТІЙКІ ФРАЗИ офіційних сповіщень (Кличко/КМВА/
+    Повітряні сили): "повітряна тривога", "загроза балістики", "відбій
+    тривоги" тощо — так, як вони реально пишуть у момент оголошення.
     """
     window = config.KYIV_ALERT_AGE_MIN * 60
     lead_chars = 250
@@ -276,8 +284,10 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
             if (now - p.published).total_seconds() > window:
                 continue
             lead = p.text[:lead_chars]
+            if not _ALERT_PHRASE_RE.search(lead):
+                continue
             scoped = _KYIV_RE.search(lead) or _NATIONWIDE_RE.search(lead)
-            if not (scoped and _THREAT_RE.search(lead)):
+            if not scoped:
                 continue
             key = (1 if _SOURCE_RE.search(lead) else 0, p.views)
             if key > best_key:
