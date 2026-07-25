@@ -24,13 +24,28 @@ def is_night(now: datetime) -> bool:
     return config.NIGHT_START_HOUR <= now.hour < config.NIGHT_END_HOUR
 
 
-def allowed_to_post(now: datetime, elapsed_min: float, top_score: int) -> bool:
-    """Розклад: день 06:00–01:00 кожні 30–60 хв, ніч 01:00–06:00 раз на 2–3 год."""
+def _seeded_interval(seed: str, bounds: tuple[float, float]) -> float:
+    """"Випадковий" поріг очікування, стабільний для одного seed.
+
+    Той самий seed (час останнього звичайного поста) завжди дає те саме число,
+    тож поріг не "стрибає" між тіками одного вікна очікування — але щойно
+    з'являється новий seed (після наступного поста), число перемішується
+    заново. Так пости йдуть не рівним кроком, а органічно (15, 19, 20 хв...).
+    """
+    lo, hi = bounds
+    return random.Random(seed).uniform(lo, hi)
+
+
+def allowed_to_post(now: datetime, elapsed_min: float, top_score: int, seed: str) -> bool:
+    """Розклад: день 06:00–01:00 ~15-20 хв (гаряча новина швидше), ніч 01:00–06:00
+    рідше. Інтервали — діапазони (config.DAY_INTERVAL_*/NIGHT_INTERVAL_*), не
+    фіксовані числа."""
     hot = top_score >= config.HOT_THRESHOLD
     if is_night(now):
-        needed = config.NIGHT_INTERVAL_HOT if hot else config.NIGHT_INTERVAL_NORMAL
+        bounds = config.NIGHT_INTERVAL_HOT if hot else config.NIGHT_INTERVAL_NORMAL
     else:
-        needed = config.DAY_INTERVAL_HOT if hot else config.DAY_INTERVAL_NORMAL
+        bounds = config.DAY_INTERVAL_HOT if hot else config.DAY_INTERVAL_NORMAL
+    needed = _seeded_interval(f"{seed}|{hot}", bounds)
     return elapsed_min >= needed
 
 
@@ -489,7 +504,8 @@ def run(dry_run: bool, force: bool) -> None:
     top = candidates[0]
     # Розклад звичайних новин — за ВЛАСНИМ таймером, не зсувається алертами/консенсусом
     elapsed = state_mod.minutes_since_regular_post(state, now)
-    if not force and not allowed_to_post(now, elapsed, top.related_count):
+    interval_seed = state.get("last_regular_post_at") or "genesis"
+    if not force and not allowed_to_post(now, elapsed, top.related_count, interval_seed):
         log.info(
             "Ще рано постити звичайну (минуло %.0f хв, топ-новина: %r, %d публікацій)",
             elapsed, top.title, top.related_count,
