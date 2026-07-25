@@ -41,6 +41,9 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+_BG_IMAGE_RE = re.compile(r"background-image:url\('([^']+)'\)")
+
+
 def fetch_posts() -> list[dict]:
     r = requests.get(f"https://t.me/s/{CHANNEL}", headers=HEADERS, timeout=25)
     r.raise_for_status()
@@ -52,8 +55,17 @@ def fetch_posts() -> list[dict]:
             continue
         text_el = msg.select_one(".tgme_widget_message_text")
         text = text_el.get_text(" ", strip=True) if text_el else ""
-        if text:
-            posts.append({"id": int(m.group(1)), "text": text})
+        if not text:
+            continue
+        # Перше фото поста (з альбому теж перше) — публічний URL на CDN
+        # Telegram (cdn*.telesco.pe), Threads сам його завантажить за IMAGE.
+        image = None
+        photo_el = msg.select_one(".tgme_widget_message_photo_wrap")
+        if photo_el and photo_el.get("style"):
+            img_m = _BG_IMAGE_RE.search(photo_el["style"])
+            if img_m:
+                image = img_m.group(1)
+        posts.append({"id": int(m.group(1)), "text": text, "image": image})
     return posts
 
 
@@ -151,12 +163,20 @@ def _publish(token: str, **fields) -> str | None:
     return None
 
 
-def post_threads(token: str, body: str, extra_tag: str = "") -> bool:
+def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | None = None) -> bool:
     """Головний пост — БЕЗ зовнішнього посилання (лінк у тексті вбиває охоплення).
-    Посилання на канал додаємо окремою відповіддю-коментарем."""
+    Посилання на канал додаємо окремою відповіддю-коментарем.
+    Якщо в оригінальному пості є фото — постимо як IMAGE (фото стабільно
+    підвищує залучення в стрічці Threads); якщо публікація з фото не
+    вдалась (Threads не зміг завантажити картинку) — фолбек на TEXT."""
     try:
         tags = f"{TAGS} {extra_tag}" if extra_tag else TAGS
-        post_id = _publish(token, media_type="TEXT", text=f"{body}{tags}"[:500])
+        caption = f"{body}{tags}"[:500]
+        post_id = None
+        if image_url:
+            post_id = _publish(token, media_type="IMAGE", image_url=image_url, text=caption)
+        if not post_id:
+            post_id = _publish(token, media_type="TEXT", text=caption)
         if not post_id:
             return False
         # Лінк — у відповідь (best-effort): зберігає охоплення головного поста
@@ -206,8 +226,8 @@ def main() -> None:
             continue
         body = format_body(p["text"])
         extra_tag = "#контрудар" if is_strike_news(p["text"]) else ""
-        print(f"Пост {p['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}")
-        if post_threads(token, body, extra_tag):
+        print(f"Пост {p['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}{' [фото]' if p.get('image') else ''}")
+        if post_threads(token, body, extra_tag, p.get("image")):
             print("  Threads: опубліковано")
             state["last_posted_id"] = p["id"]
             save_state(state)
