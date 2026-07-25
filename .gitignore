@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 .venv/
 CLAUDE.md
+
+# Робочі файли іншого агента (TikTok-кросспост) — містить секрети в коді,
+# не мають потрапити в публічний репозиторій
+nul
+tiktok_demo.py
+tiktok_demo_video.mp4

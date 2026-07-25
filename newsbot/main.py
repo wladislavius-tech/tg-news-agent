@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, cover, genimage, generic_photos, llm, state as state_mod, stickers, tg, tgtrends, ukrnet
+from . import config, cover, genimage, generic_photos, llm, state as state_mod, tg, tgtrends, ukrnet
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -232,22 +232,13 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     if recent and llm.is_same_event(alert.title, [], recent):
         return False  # цей факт уже постили (оновлення-розвиток пройде як не-дубль)
     caption = llm.compose_alert(alert.description or alert.title)
-    source_text = f"{alert.title} {alert.description or ''}"
-    sticker_id = stickers.pick(caption, source_text)
     if dry_run:
         print("=" * 60)
         print("[ТЕРМІНОВИЙ АЛЕРТ — текст без картинки]")
         print(caption)
-        if sticker_id:
-            print("[+ стікер]")
         return True
     message_id = tg.send_post(caption)  # текстовий пост, без картинки
     log.info("Терміновий алерт опубліковано ✔: %r", alert.title)
-    if sticker_id:
-        try:
-            tg.send_sticker(sticker_id)
-        except Exception:  # noqa: BLE001 — стікер необов'язковий, пост важливіший
-            log.warning("Не вдалося надіслати стікер (пост уже опубліковано)")
     state_mod.remember_post(state, alert.cluster_id, alert.title, now, message_id=message_id)
     state_mod.save(state)
     return True
@@ -398,16 +389,6 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     else:
         message_id = tg.send_post(caption, **media)
         log.info("Опубліковано ✔: %r", item.title)
-    source_text = f"{item.title} {item.description or ''}"
-    sticker_id = stickers.pick(caption, source_text)
-    if sticker_id:
-        if dry_run:
-            print("[+ стікер]")
-        else:
-            try:
-                tg.send_sticker(sticker_id)
-            except Exception:  # noqa: BLE001 — стікер необов'язковий, пост важливіший
-                log.warning("Не вдалося надіслати стікер (пост уже опубліковано)")
     is_video = "video" in media or "video_album" in media
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
