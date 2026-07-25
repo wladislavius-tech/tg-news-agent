@@ -23,6 +23,11 @@ def _call(method: str, *, data: dict, files: dict | None = None) -> dict:
     return payload["result"]
 
 
+def send_sticker(file_id: str) -> None:
+    """Фірмовий анімований стікер каналу — окремим повідомленням після поста."""
+    _call("sendSticker", data={"chat_id": config.TELEGRAM_CHANNEL, "sticker": file_id})
+
+
 def send_admin(text: str) -> None:
     """Сповіщення власнику в особисті. Збій сповіщення не має валити агента."""
     if not config.TELEGRAM_ADMIN_CHAT:
@@ -91,7 +96,8 @@ def send_post(
     youtube_url: str = "",
     album: list[bytes] | None = None,
     video_album: list[bytes] | None = None,
-) -> None:
+) -> int | None:
+    """Публікує пост, повертає message_id (для посилання на пост із дайджесту)."""
     if video_album:
         # Добірка коротких відео однієї теми (media group з відео)
         media, files = [], {}
@@ -167,4 +173,6 @@ def send_post(
                 "link_preview_options": '{"is_disabled": true}',
             },
         )
-    _seed_reaction(_first_message_id(result))
+    message_id = _first_message_id(result)
+    _seed_reaction(message_id)
+    return message_id

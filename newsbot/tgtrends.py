@@ -261,18 +261,25 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
     Пріоритет — постам з авторитетним джерелом і найбільше переглядів.
     Поститься завжди без картинки (див. maybe_post_urgent_alert) — заради
     швидкості пошук медіа в інших каналах тут навмисно не робиться.
+
+    Ключові слова перевіряємо ЛИШЕ на початку поста (перше речення) — інакше
+    прохідна згадка "Київ" чи "обстріли" в середині зовсім іншої новини
+    (напр. цитата про війну в матеріалі про спорт) хибно розпізнається як
+    жива загроза, а LLM потім плутає непов'язані факти в одному пості.
     """
     window = config.KYIV_ALERT_AGE_MIN * 60
+    lead_chars = 250
     best: TrendPost | None = None
     best_key = (-1, 0)
     for ch in config.CONSENSUS_CHANNELS:
         for p in fetch_channel(ch, now):
             if (now - p.published).total_seconds() > window:
                 continue
-            scoped = _KYIV_RE.search(p.text) or _NATIONWIDE_RE.search(p.text)
-            if not (scoped and _THREAT_RE.search(p.text)):
+            lead = p.text[:lead_chars]
+            scoped = _KYIV_RE.search(lead) or _NATIONWIDE_RE.search(lead)
+            if not (scoped and _THREAT_RE.search(lead)):
                 continue
-            key = (1 if _SOURCE_RE.search(p.text) else 0, p.views)
+            key = (1 if _SOURCE_RE.search(lead) else 0, p.views)
             if key > best_key:
                 best, best_key = p, key
     return to_feed_item(best) if best else None

@@ -19,7 +19,7 @@ def load() -> dict:
     state.setdefault("posted_titles", [])
     state.setdefault("last_post_at", None)
     state.setdefault("last_regular_post_at", None)
-    state.setdefault("daily", {"date": "", "titles": [], "videos": 0})
+    state.setdefault("daily", {"date": "", "titles": [], "message_ids": [], "videos": 0})
     state.setdefault("digest_date", "")
     state.setdefault("morning_date", "")
     state.setdefault("horoscope_date", "")
@@ -76,7 +76,7 @@ def is_duplicate(state: dict, cluster_id: str, title: str) -> bool:
 def remember_post(
     state: dict, cluster_id: str, title: str, now: datetime,
     image_url: str = "", is_video: bool = False, is_regular: bool = False,
-    is_viral: bool = False,
+    is_viral: bool = False, message_id: int | None = None,
 ) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
@@ -90,11 +90,19 @@ def remember_post(
     if daily.get("date") != today:
         daily["date"] = today
         daily["titles"] = []
+        daily["message_ids"] = []
         daily["image_urls"] = []
         daily["videos"] = 0
         daily["viral"] = 0
     daily["titles"].append(title)
     daily["titles"] = daily["titles"][-60:]
+    # message_ids йде синхронно з titles (той самий індекс = той самий пост).
+    # Старий стан міг не мати цього поля — вирівнюємо перед додаванням.
+    message_ids = daily.setdefault("message_ids", [])
+    while len(message_ids) < len(daily["titles"]) - 1:
+        message_ids.append(None)
+    message_ids.append(message_id)
+    daily["message_ids"] = message_ids[-60:]
     if image_url:
         daily.setdefault("image_urls", []).append(image_url)
         daily["image_urls"] = daily["image_urls"][-12:]

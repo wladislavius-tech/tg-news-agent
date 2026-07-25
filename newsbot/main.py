@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, cover, genimage, llm, state as state_mod, tg, tgtrends, ukrnet
+from . import config, cover, genimage, generic_photos, llm, state as state_mod, stickers, tg, tgtrends, ukrnet
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -84,7 +84,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
     фото з каналів-конкурентів (та сама подія) → YouTube-прев'ю (лише коли
-    фото немає) → AI-ілюстрація → обкладинка.
+    фото немає) → узагальнене фото відомої персони/установи → AI-ілюстрація →
+    обкладинка.
     """
     src_kwargs: dict = {}
     if item.cluster_id.startswith("tg:"):
@@ -127,6 +128,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             )
             if alt_image_url:
                 image = ukrnet.download_image(alt_image_url)
+        if image is None:
+            image = generic_photos.pick(f"{item.title} {item.description or ''}", now)
         if image is None:
             image = genimage.generate_illustration(item.title, meta.description)
         if image:
@@ -191,14 +194,20 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
             return caption, {"youtube_url": youtube}
 
-    # 5) AI-ілюстрація
+    # 5) Узагальнене фото відомої персони/установи (президент, ТЦК тощо) — перед AI
+    if not images:
+        generic = generic_photos.pick(f"{item.title} {meta.description or ''}", now)
+        if generic:
+            images = [generic]
+
+    # 6) AI-ілюстрація
     ai_illustration = False
     if not images:
         generated = genimage.generate_illustration(item.title, meta.description)
         if generated:
             images = [generated]
             ai_illustration = True
-    # 6) Шаблонна обкладинка
+    # 7) Шаблонна обкладинка
     if not images:
         images = [cover.make_cover(item.title, now)]
 
@@ -223,14 +232,23 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     if recent and llm.is_same_event(alert.title, [], recent):
         return False  # цей факт уже постили (оновлення-розвиток пройде як не-дубль)
     caption = llm.compose_alert(alert.description or alert.title)
+    source_text = f"{alert.title} {alert.description or ''}"
+    sticker_id = stickers.pick(caption, source_text)
     if dry_run:
         print("=" * 60)
         print("[ТЕРМІНОВИЙ АЛЕРТ — текст без картинки]")
         print(caption)
+        if sticker_id:
+            print("[+ стікер]")
         return True
-    tg.send_post(caption)  # текстовий пост, без картинки
+    message_id = tg.send_post(caption)  # текстовий пост, без картинки
     log.info("Терміновий алерт опубліковано ✔: %r", alert.title)
-    state_mod.remember_post(state, alert.cluster_id, alert.title, now)
+    if sticker_id:
+        try:
+            tg.send_sticker(sticker_id)
+        except Exception:  # noqa: BLE001 — стікер необов'язковий, пост важливіший
+            log.warning("Не вдалося надіслати стікер (пост уже опубліковано)")
+    state_mod.remember_post(state, alert.cluster_id, alert.title, now, message_id=message_id)
     state_mod.save(state)
     return True
 
@@ -319,7 +337,9 @@ def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
         or len(daily.get("titles", [])) < config.DIGEST_MIN_ITEMS
     ):
         return
-    caption = llm.compose_digest(daily["titles"], now.strftime("%d.%m.%Y"))
+    caption = llm.compose_digest(
+        daily["titles"], daily.get("message_ids") or [], now.strftime("%d.%m.%Y")
+    )
     # Повна версія дня окремою сторінкою Telegraph (Instant View + SEO)
     if not dry_run:
         try:
@@ -361,6 +381,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
     img_url = media.pop("_img_url", "")
+    message_id = None
     if dry_run:
         print("=" * 60)
         print(caption)
@@ -375,13 +396,23 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
         else:
             print(f"[картинка: {len(media['image'])} байт]")
     else:
-        tg.send_post(caption, **media)
+        message_id = tg.send_post(caption, **media)
         log.info("Опубліковано ✔: %r", item.title)
+    source_text = f"{item.title} {item.description or ''}"
+    sticker_id = stickers.pick(caption, source_text)
+    if sticker_id:
+        if dry_run:
+            print("[+ стікер]")
+        else:
+            try:
+                tg.send_sticker(sticker_id)
+            except Exception:  # noqa: BLE001 — стікер необов'язковий, пост важливіший
+                log.warning("Не вдалося надіслати стікер (пост уже опубліковано)")
     is_video = "video" in media or "video_album" in media
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
         image_url=img_url, is_video=is_video, is_regular=is_regular,
-        is_viral=item.is_viral,
+        is_viral=item.is_viral, message_id=message_id,
     )
     if not dry_run:
         state_mod.save(state)

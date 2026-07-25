@@ -247,8 +247,8 @@ def compose_horoscope(date_str: str) -> str | None:
 
 
 _DIGEST_PROMPT = """Ти — редактор українського Telegram-каналу новин. Ось заголовки
-постів за сьогодні. Обери {max_lines} НАЙВАЖЛИВІШИХ РІЗНИХ подій і стисни кожну
-в один рядок до 90 символів. Порядок — від найважливішої.
+постів за сьогодні, кожен під своїм номером. Обери {max_lines} НАЙВАЖЛИВІШИХ РІЗНИХ
+подій і стисни кожну в один рядок до 90 символів. Порядок — від найважливішої.
 
 Правила:
 - КРИТИЧНО: жодні два рядки не можуть стосуватися однієї події, навіть переказаної
@@ -258,28 +258,57 @@ _DIGEST_PROMPT = """Ти — редактор українського Telegram-
   🎾 теніс, 💰 гроші/застава/фінанси/бюджет, ⚖️ суд/вироки/прокуратура, 🚔 поліція/обшуки,
   💥 обстріли/вибухи, 🕯 загиблі, 🚂 залізниця, 🚗 ДТП, ✈️ авіація/дрони, 🌍 міжнародне,
   ⚡️ енергетика, 🌦 погода. Якщо сумніваєшся — бери нейтральне 📌.
+- Для кожного рядка вкажи "source" — номер ОРИГІНАЛЬНОГО заголовка знизу, з якого
+  цей рядок зроблено (щоб рядок дайджесту можна було зв'язати з повним постом).
 
-Відповідай строго JSON: {{"lines": ["...", "..."]}}
+Відповідай строго JSON: {{"lines": [{{"text": "...", "source": N}}, ...]}}
 
 Заголовки:
 {titles}"""
 
 
-def compose_digest(titles: list[str], now_str: str) -> str:
-    """Вечірній дайджест «Головне за день»."""
-    lines: list[str] | None = None
+def compose_digest(titles: list[str], message_ids: list[int | None], now_str: str) -> str:
+    """Вечірній дайджест «Головне за день». Кожен рядок — посилання на повний пост
+    у каналі (message_ids — той самий індекс, що й titles)."""
+    lines: list[tuple[str, object]] | None = None
     if config.AI_AVAILABLE:
         prompt = _DIGEST_PROMPT.format(
             max_lines=config.DIGEST_MAX_LINES,
-            titles="\n".join(f"- {t}" for t in titles),
+            titles="\n".join(f"{i + 1}. {t}" for i, t in enumerate(titles)),
         )
         data = _gemini_json(prompt)
         if data and isinstance(data.get("lines"), list):
-            lines = [str(l).strip() for l in data["lines"] if str(l).strip()]
+            parsed = []
+            for entry in data["lines"]:
+                if isinstance(entry, dict):
+                    text, source = str(entry.get("text", "")).strip(), entry.get("source")
+                elif isinstance(entry, str):
+                    text, source = entry.strip(), None
+                else:
+                    continue
+                if text:
+                    parsed.append((text, source))
+            if parsed:
+                lines = parsed
     if not lines:
-        lines = ["• " + t[:90] for t in titles[: config.DIGEST_MAX_LINES]]
+        lines = [(f"• {t[:90]}", i + 1) for i, t in enumerate(titles[: config.DIGEST_MAX_LINES])]
 
-    body = "\n\n".join(html.escape(l) for l in lines[: config.DIGEST_MAX_LINES])
+    def _link(source: object) -> str | None:
+        try:
+            idx = int(source) - 1  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+        if 0 <= idx < len(message_ids) and message_ids[idx]:
+            return f"{config.CHANNEL_LINK}/{message_ids[idx]}"
+        return None
+
+    rendered = []
+    for text, source in lines[: config.DIGEST_MAX_LINES]:
+        safe = html.escape(text)
+        url = _link(source)
+        rendered.append(f'<a href="{html.escape(url, quote=True)}">{safe}</a>' if url else safe)
+
+    body = "\n\n".join(rendered)
     footer = f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
     return f"<b>🌙 Головне за {now_str}</b>\n\n{body}\n\n{footer}"
 

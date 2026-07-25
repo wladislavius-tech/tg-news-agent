@@ -13,16 +13,19 @@ MARGIN = 90
 _FONT_CANDIDATES = [
     # GitHub Actions (ubuntu)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     # Windows
     r"C:\Windows\Fonts\arialbd.ttf",
     r"C:\Windows\Fonts\segoeuib.ttf",
+]
+_FONT_CANDIDATES_REGULAR = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
     r"C:\Windows\Fonts\arial.ttf",
 ]
 
 
-def _font(size: int) -> ImageFont.FreeTypeFont:
-    for path in _FONT_CANDIDATES:
+def _font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
+    for path in _FONT_CANDIDATES if bold else _FONT_CANDIDATES_REGULAR:
         if Path(path).exists():
             return ImageFont.truetype(path, size)
     return ImageFont.load_default(size)
@@ -233,7 +236,8 @@ def make_digest_collage(image_blobs: list[bytes], when: datetime) -> bytes | Non
     for img, (x, y, w, h) in zip(imgs, cells):
         canvas.paste(ImageOps.fit(img, (w, h)), (x, y))
 
-    # Затемнення, щоб текст читався поверх мозаїки
+    # Затемнення, щоб текст читався поверх мозаїки (розташування — як у
+    # вихідній версії, по центру; лише розмір заголовка лишається зменшеним).
     canvas = canvas.convert("RGBA")
     shade = Image.new("RGBA", (Wc, Hc), (8, 14, 35, 150))
     canvas = Image.alpha_composite(canvas, shade).convert("RGB")
@@ -241,14 +245,70 @@ def make_digest_collage(image_blobs: list[bytes], when: datetime) -> bytes | Non
     draw = ImageDraw.Draw(canvas)
     draw.rectangle([0, 0, Wc, 10], fill=(255, 197, 0))
     draw.rectangle([0, Hc - 10, Wc, Hc], fill=(255, 197, 0))
+
+    # "НОВИНИ УКРАЇНИ • дата" і "Головне за день" — впритул одне до одного,
+    # обидва по центру кадру, обидва кольору акценту (жовтий).
+    accent = (255, 197, 0)
     header = f"НОВИНИ УКРАЇНИ  •  {when.strftime('%d.%m.%Y')}"
-    draw.text((Wc // 2, 150), header, font=_font(40), fill=(255, 197, 0), anchor="mm")
-    title_font = _font(110)
-    draw.text((Wc // 2 + 3, Hc // 2 + 3), "ГОЛОВНЕ ЗА ДЕНЬ", font=title_font, fill=(0, 0, 0), anchor="mm")
-    draw.text((Wc // 2, Hc // 2), "ГОЛОВНЕ ЗА ДЕНЬ", font=title_font, fill=(255, 255, 255), anchor="mm")
+    header_font = _font(40)
+    title_font = _font(40)
+    title = "ГОЛОВНЕ ЗА ДЕНЬ"
+
+    header_h = draw.textbbox((0, 0), header, font=header_font)[3]
+    title_h = draw.textbbox((0, 0), title, font=title_font)[3]
+    gap = 14
+    block_top = Hc // 2 - (header_h + gap + title_h) // 2
+    header_cy = block_top + header_h // 2
+    title_cy = block_top + header_h + gap + title_h // 2
+
+    for dx, dy, color in ((2, 2, (0, 0, 0)), (0, 0, accent)):
+        draw.text((Wc // 2 + dx, header_cy + dy), header, font=header_font, fill=color, anchor="mm")
+        draw.text((Wc // 2 + dx, title_cy + dy), title, font=title_font, fill=color, anchor="mm")
 
     buf = io.BytesIO()
     canvas.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
+def make_institution_card(label: str, when: datetime) -> bytes:
+    """Узагальнена картка-плашка для установи без "типового" фото (напр. ТЦК —
+    у кожному місті своя будівля, реальне фото було б оманливим). Простий
+    силует будівлі + назва, у фірмовому темно-синьому стилі каналу."""
+    img = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(img)
+    top, bottom = (11, 21, 48), (28, 48, 94)
+    for y in range(H):
+        t = y / H
+        draw.line(
+            [(0, y), (W, y)],
+            fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)),
+        )
+
+    # Силует будівлі: корпус + ряди вікон + флагшток (у верхній половині кадру,
+    # щоб нижче лишалось чисте місце під назву — без накладання на вікна)
+    bw, bh = 480, 260
+    bx, by = (W - bw) // 2, 90
+    draw.rectangle([bx, by, bx + bw, by + bh], fill=(30, 48, 92), outline=(70, 95, 145), width=3)
+    win_w, win_h, gap = 44, 54, 24
+    cols = (bw - gap) // (win_w + gap)
+    rows = (bh - 50) // (win_h + gap)
+    for r in range(rows):
+        for c in range(cols):
+            wx = bx + gap + c * (win_w + gap)
+            wy = by + 36 + r * (win_h + gap)
+            draw.rectangle([wx, wy, wx + win_w, wy + win_h], fill=(255, 210, 90))
+    draw.rectangle([bx + bw // 2 - 6, by - 70, bx + bw // 2 + 6, by], fill=(200, 210, 225))
+    draw.polygon(
+        [(bx + bw // 2 + 6, by - 70), (bx + bw // 2 + 90, by - 52), (bx + bw // 2 + 6, by - 34)],
+        fill=(255, 197, 0),
+    )
+
+    draw.rectangle([0, H - 14, W, H], fill=(255, 197, 0))
+    font = _font(110)
+    draw.text((W // 2, by + bh + 130), label, font=font, fill=(255, 255, 255), anchor="mm")
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=88)
     return buf.getvalue()
 
 
