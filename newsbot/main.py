@@ -68,7 +68,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
-    YouTube-прев'ю (лише коли фото немає) → AI-ілюстрація → обкладинка.
+    фото з каналів-конкурентів (та сама подія) → YouTube-прев'ю (лише коли
+    фото немає) → AI-ілюстрація → обкладинка.
     """
     src_kwargs: dict = {}
     if item.cluster_id.startswith("tg:"):
@@ -108,8 +109,15 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                 )
                 return caption, {"video": video}
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
-        # Фото самого поста (консенсус-новини) — «підходяща картинка»; далі AI-ілюстрація
+        # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
+        # шукаємо фото цієї ж події в інших каналах, і лише тоді AI-ілюстрація
         image = ukrnet.download_image(item.image_url) if item.image_url else None
+        if image is None:
+            alt_image_url, _alt_video_url = tgtrends.find_matching_media(
+                item.description or item.title, now, exclude_channel=channel
+            )
+            if alt_image_url:
+                image = ukrnet.download_image(alt_image_url)
         if image is None:
             image = genimage.generate_illustration(item.title, meta.description)
         if image:
@@ -158,21 +166,30 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
         if len(images) >= config.ALBUM_MAX_PHOTOS:
             break
 
-    # 3) Фото немає — YouTube-прев'ю як запасний варіант
+    # 3) Власних фото немає — шукаємо цю ж подію в каналах-конкурентах
+    if not images:
+        alt_image_url, _alt_video_url = tgtrends.find_matching_media(item.title, now)
+        if alt_image_url:
+            img = ukrnet.download_image(alt_image_url)
+            if img:
+                images = [img]
+                first_image_url = alt_image_url
+
+    # 4) Фото немає — YouTube-прев'ю як запасний варіант
     if not images:
         youtube = next((m.youtube_url for m in metas.values() if m.youtube_url), "")
         if youtube:
             caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
             return caption, {"youtube_url": youtube}
 
-    # 4) AI-ілюстрація
+    # 5) AI-ілюстрація
     ai_illustration = False
     if not images:
         generated = genimage.generate_illustration(item.title, meta.description)
         if generated:
             images = [generated]
             ai_illustration = True
-    # 5) Шаблонна обкладинка
+    # 6) Шаблонна обкладинка
     if not images:
         images = [cover.make_cover(item.title, now)]
 
@@ -353,6 +370,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
         image_url=img_url, is_video=is_video, is_regular=is_regular,
+        is_viral=item.is_viral,
     )
     if not dry_run:
         state_mod.save(state)
@@ -414,6 +432,9 @@ def run(dry_run: bool, force: bool) -> None:
                 it = matched
             if state_mod.is_duplicate(state, it.cluster_id, it.title):
                 continue
+            if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
+                log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
+                continue
             candidates = [it]
             log.info("Укрнет без кандидатів, беру тренд із Telegram: %r", it.title)
             break
@@ -436,6 +457,8 @@ def run(dry_run: bool, force: bool) -> None:
             if state_mod.is_duplicate(state, vit.cluster_id, vit.title):
                 continue
             if recent_titles and llm.is_same_event(vit.title, [], recent_titles):
+                continue
+            if vit.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
                 continue
             candidates.insert(0, vit)
             log.info("Квота відео (частка %.0f%%): беру відео-сюжет %r", vshare * 100, vit.title)

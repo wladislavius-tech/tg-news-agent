@@ -42,6 +42,29 @@ def _looks_russian(text: str) -> bool:
     return ru >= 3 and ru > ua
 
 
+# Ключові слова, що вказують на зв'язок з Україною/війною/світовою політикою.
+# Джерела — TREND_CHANNELS — часом дають пости російською (цитати, репости),
+# що не відсіюються _looks_russian (немає літер ы/э/ъ/ё) — тому словник охоплює
+# й українські, і російські форми ключових термінів.
+# Пости-тренди БЕЗ жодного збігу вважаються "вірусним офтопом" (здоров'я,
+# лайфстайл, наука тощо) — дозволені, але в межах денної квоти (config.VIRAL_QUOTA_MAX).
+_TOPIC_RE = re.compile(
+    r"україн|укра[иі]н|рос(і|с)|\bрф\b|кремл|путін|путин|зеленськ|зеленск|війн|войн|"
+    r"фронт|зсу|окупант|оккупант|обстріл|обстрел|ракет|дрон|безпілотник|"
+    r"беспилотник|шахед|бпла|ппо|мобілізац|мобилизац|санкці|санкц|нато|трамп|"
+    r"мвф|полон|плен|штурм|наступ|загин|погиб|поранен|ранен|постражд|жертв|"
+    r"харків|харьков|києв|київ|киев|одес|херсон|запоріжж|запорож|донбас|крим|"
+    r"крым|бахмут|покровськ|покровск|суми|сумськ|чернігів|чернигов|дніпро|"
+    r"днепр|маріупол|мариупол|донеч|донец|луган",
+    re.IGNORECASE,
+)
+
+
+def is_off_topic(text: str) -> bool:
+    """Тренд без явного зв'язку з Україною/війною — потенційно вірусний офтоп."""
+    return not _TOPIC_RE.search(text)
+
+
 @dataclass
 class TrendPost:
     channel: str
@@ -167,6 +190,7 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         video_url=post.video_url,
         video_urls=post.video_urls,
         image_url=post.image_url,
+        is_viral=is_off_topic(post.text),
     )
 
 
@@ -185,6 +209,32 @@ def _same_topic(words_a: set[str], words_b: set[str]) -> bool:
     return len(overlap) >= 4 and len(overlap) / min(len(words_a), len(words_b)) >= 0.28
 
 
+def find_matching_media(
+    text: str, now: datetime, *, exclude_channel: str = "", max_age_hours: float = 3.0
+) -> tuple[str, str]:
+    """Фото/відео цієї ж події з інших каналів (image_url, video_url).
+
+    Використовується, коли влучний тренд-пост не має власного медіа: перед тим,
+    як генерувати AI-ілюстрацію, перевіряємо, чи цю ж новину вже висвітлили
+    канали-конкуренти з фото чи відео.
+    """
+    words = _sig_words(text)
+    if not words:
+        return "", ""
+    for ch in config.TREND_CHANNELS:
+        if ch == exclude_channel:
+            continue
+        for p in fetch_channel(ch, now):
+            age = (now - p.published).total_seconds()
+            if not (0 <= age <= max_age_hours * 3600):
+                continue
+            if not (p.image_url or p.video_url):
+                continue
+            if _same_topic(words, _sig_words(p.text)):
+                return p.image_url, p.video_url
+    return "", ""
+
+
 _KYIV_RE = re.compile(r"київ|києв|столиц|кмва|кличко", re.IGNORECASE)
 _THREAT_RE = re.compile(
     r"ппо|обстріл|атак|ракет|балісти|шахед|дрон|вибух|тривог|укритт|удар|приліт|"
@@ -199,7 +249,9 @@ def find_kyiv_alert(now: datetime) -> FeedItem | None:
 
     Такі новини (особливо від Кличка чи КМВА) — обов'язкові й невідкладні.
     Достатньо ОДНОГО каналу (на відміну від консенсусу). Пріоритет — постам
-    з авторитетним джерелом і найбільше переглядів.
+    з авторитетним джерелом і найбільше переглядів. Поститься завжди без
+    картинки (див. maybe_post_kyiv_alert) — заради швидкості пошук медіа
+    в інших каналах тут навмисно не робиться.
     """
     window = config.KYIV_ALERT_AGE_MIN * 60
     best: TrendPost | None = None

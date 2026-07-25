@@ -23,6 +23,7 @@ class FeedItem:
     video_url: str = ""     # пряме відео (лише для трендів з TG-каналів)
     video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи поста
     image_url: str = ""     # фото поста (для консенсус-новин з TG-каналів)
+    is_viral: bool = False  # тренд без явного зв'язку з Україною/війною (квота у config.VIRAL_QUOTA_MAX)
 
 
 @dataclass
@@ -120,7 +121,7 @@ def fetch_cluster_sources(cluster_url: str) -> list[SourceArticle]:
             continue
         seen_domains.add(domain)
         sources.append(SourceArticle(link.get_text(strip=True), href, domain))
-        if len(sources) >= 5:
+        if len(sources) >= config.SOURCE_FETCH_MAX:
             break
     return sources
 
