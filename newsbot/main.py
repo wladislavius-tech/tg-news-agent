@@ -118,9 +118,10 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             if video:
                 caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": video}
-        caption = llm.compose_post(item, sources, meta, **src_kwargs)
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
-        # шукаємо фото цієї ж події в інших каналах, і лише тоді AI-ілюстрація
+        # шукаємо фото цієї ж події в інших каналах, потім узагальнене фото, і
+        # лише тоді AI-ілюстрація. Підпис збираємо ПІСЛЯ цього — щоб коректно
+        # позначити в пості, якщо картинку таки згенерував AI.
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
             alt_image_url, _alt_video_url = tgtrends.find_matching_media(
@@ -130,8 +131,11 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                 image = ukrnet.download_image(alt_image_url)
         if image is None:
             image = generic_photos.pick(f"{item.title} {item.description or ''}", now)
+        ai_illustration = False
         if image is None:
             image = genimage.generate_illustration(item.title, meta.description)
+            ai_illustration = bool(image)
+        caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration, **src_kwargs)
         if image:
             return caption, {"image": image}
         return caption, {"image": cover.make_cover(item.title, now)}
