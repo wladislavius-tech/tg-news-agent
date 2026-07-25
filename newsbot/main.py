@@ -84,8 +84,9 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
     фото з каналів-конкурентів (та сама подія) → YouTube-прев'ю (лише коли
-    фото немає) → узагальнене фото відомої персони/установи → AI-ілюстрація →
-    обкладинка.
+    фото немає) → узагальнене фото відомої персони/установи → обкладинка.
+    Лише РЕАЛЬНІ фото — AI-ілюстрація новини принципово не використовується
+    (може вводити в оману, видаючи вигадану сцену за реальне зображення події).
     """
     src_kwargs: dict = {}
     if item.cluster_id.startswith("tg:"):
@@ -119,9 +120,8 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                 caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": video}
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
-        # шукаємо фото цієї ж події в інших каналах, потім узагальнене фото, і
-        # лише тоді AI-ілюстрація. Підпис збираємо ПІСЛЯ цього — щоб коректно
-        # позначити в пості, якщо картинку таки згенерував AI.
+        # шукаємо фото цієї ж події в інших каналах, потім узагальнене фото;
+        # якщо й цього немає — шаблонна обкладинка (без AI-ілюстрації).
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
             alt_image_url, _alt_video_url = tgtrends.find_matching_media(
@@ -131,11 +131,7 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                 image = ukrnet.download_image(alt_image_url)
         if image is None:
             image = generic_photos.pick(f"{item.title} {item.description or ''}", now)
-        ai_illustration = False
-        if image is None:
-            image = genimage.generate_illustration(item.title, meta.description)
-            ai_illustration = bool(image)
-        caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration, **src_kwargs)
+        caption = llm.compose_post(item, sources, meta, **src_kwargs)
         if image:
             return caption, {"image": image}
         return caption, {"image": cover.make_cover(item.title, now)}
@@ -198,24 +194,17 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
             caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
             return caption, {"youtube_url": youtube}
 
-    # 5) Узагальнене фото відомої персони/установи (президент, ТЦК тощо) — перед AI
+    # 5) Узагальнене фото відомої персони/установи (президент, ТЦК тощо)
     if not images:
         generic = generic_photos.pick(f"{item.title} {meta.description or ''}", now)
         if generic:
             images = [generic]
 
-    # 6) AI-ілюстрація
-    ai_illustration = False
-    if not images:
-        generated = genimage.generate_illustration(item.title, meta.description)
-        if generated:
-            images = [generated]
-            ai_illustration = True
-    # 7) Шаблонна обкладинка
+    # 6) Шаблонна обкладинка (без AI-ілюстрації — лише реальні фото)
     if not images:
         images = [cover.make_cover(item.title, now)]
 
-    caption = llm.compose_post(item, sources, meta, ai_illustration=ai_illustration, **src_kwargs)
+    caption = llm.compose_post(item, sources, meta, **src_kwargs)
     if len(images) > 1:
         return caption, {"album": images, "_img_url": first_image_url}
     return caption, {"image": images[0], "_img_url": first_image_url}

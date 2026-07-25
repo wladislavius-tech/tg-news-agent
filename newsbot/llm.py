@@ -11,7 +11,7 @@ import logging
 
 import requests
 
-from . import config
+from . import config, stickers
 from .ukrnet import ArticleMeta, FeedItem, SourceArticle
 
 log = logging.getLogger(__name__)
@@ -86,7 +86,6 @@ def compose_post(
     meta: ArticleMeta,
     video_credit: str = "",
     youtube_url: str = "",
-    ai_illustration: bool = False,
     source_url: str = "",
     source_name: str = "",
     require_ai: bool = False,
@@ -95,7 +94,6 @@ def compose_post(
 
     video_credit — автор/видання, чиє відео постимо (обов'язкове зазначення авторства).
     youtube_url — YouTube-відео новини; додається посиланням у пост.
-    ai_illustration — картинка згенерована ШІ; чесно позначаємо це у пості.
     source_url/source_name — явне посилання на джерело (для трендів з TG-каналів).
     """
     has_ai = bool(config.AI_AVAILABLE)
@@ -111,8 +109,10 @@ def compose_post(
         body = meta.description
 
     body_html = _md_bold_to_html(body) if body else ""
+    source_text = f"{item.title} {item.description or ''}"
+    emoji_tag = stickers.pick_html(headline, source_text)
 
-    parts = [f"<b>{_md_bold_strip(headline)}</b>"]
+    parts = [f"<b>{emoji_tag}{_md_bold_strip(headline)}</b>"]
     if body_html:
         parts.append(body_html)
     if youtube_url:
@@ -125,8 +125,6 @@ def compose_post(
         )
     if video_credit:
         footer_lines.append(f"🎥 Відео: {html.escape(video_credit)}")
-    if ai_illustration:
-        footer_lines.append("🎨 Ілюстрація: згенерована ШІ")
     footer_lines.append(
         f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
     )
@@ -159,7 +157,8 @@ def compose_alert(text: str) -> str:
             headline = str(data["headline"]).strip()
             body = str(data["body"]).strip()
 
-    parts = [f"<b>{_md_bold_strip(headline)}</b>", _md_bold_to_html(body)]
+    emoji_tag = stickers.pick_html(headline, text)
+    parts = [f"<b>{emoji_tag}{_md_bold_strip(headline)}</b>", _md_bold_to_html(body)]
     parts.append(
         f'📌 <a href="{config.CHANNEL_LINK}">{html.escape(config.CHANNEL_NAME)} — підписатися</a>'
     )
