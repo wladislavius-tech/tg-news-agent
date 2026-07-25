@@ -91,22 +91,16 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
                     seen_vhashes.add(vhash)
                     videos.append(vid)
             if len(videos) >= config.VIDEO_ALBUM_MIN:
-                caption = llm.compose_post(
-                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
-                )
+                caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video_album": videos}
             if len(videos) == 1:
-                caption = llm.compose_post(
-                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
-                )
+                caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": videos[0]}
         # Одне коротке відео тренда
         if item.video_url:
             video = ukrnet.download_video(item.video_url)
             if video:
-                caption = llm.compose_post(
-                    item, sources, meta, video_credit=f"@{channel}", **src_kwargs
-                )
+                caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": video}
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
@@ -202,10 +196,12 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
 WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
 
 
-def maybe_post_kyiv_alert(state: dict, now: datetime, dry_run: bool) -> bool:
-    """Обстріл/повітряна загроза Києву — обов'язковий невідкладний пост (сухо, текстом).
+def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
+    """Обстріл/повітряна загроза (Києва або по всій Україні) — обов'язковий
+    невідкладний пост (сухо, текстом), без жодних обмежень на кількість постів:
+    викликається до всіх перевірок розкладу/лімітів. Єдиний захист — дубль.
     Повертає True, якщо алерт опубліковано (тоді решту постингу цього запуску пропускаємо)."""
-    alert = tgtrends.find_kyiv_alert(now)
+    alert = tgtrends.find_urgent_alert(now)
     if not alert or state_mod.is_duplicate(state, alert.cluster_id, alert.title):
         return False
     recent = (state.get("daily") or {}).get("titles", [])[-20:]
@@ -214,11 +210,11 @@ def maybe_post_kyiv_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     caption = llm.compose_alert(alert.description or alert.title)
     if dry_run:
         print("=" * 60)
-        print("[АЛЕРТ КИЄВА — текст без картинки]")
+        print("[ТЕРМІНОВИЙ АЛЕРТ — текст без картинки]")
         print(caption)
         return True
     tg.send_post(caption)  # текстовий пост, без картинки
-    log.info("АЛЕРТ Києва опубліковано ✔: %r", alert.title)
+    log.info("Терміновий алерт опубліковано ✔: %r", alert.title)
     state_mod.remember_post(state, alert.cluster_id, alert.title, now)
     state_mod.save(state)
     return True
@@ -402,9 +398,9 @@ def run(dry_run: bool, force: bool) -> None:
     first_run = not state["posted_ids"] and not state.get("last_post_at")
 
     # --- Термінові пости: публікуються негайно, НЕ зсувають розклад звичайних ---
-    # (алерт Києва й консенсус гігантів не чіпають таймер звичайних новин)
+    # (терміновий алерт і консенсус гігантів не чіпають таймер звичайних новин)
     if not first_run:
-        maybe_post_kyiv_alert(state, now, dry_run)
+        maybe_post_urgent_alert(state, now, dry_run)
 
     # --- Рубрики за своїм часом ---
     maybe_post_morning(state, now, dry_run)

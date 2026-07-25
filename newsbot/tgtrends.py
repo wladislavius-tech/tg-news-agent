@@ -236,22 +236,31 @@ def find_matching_media(
 
 
 _KYIV_RE = re.compile(r"київ|києв|столиц|кмва|кличко", re.IGNORECASE)
+# Загроза по всій країні (не прив'язана до конкретного міста) — теж невідкладна
+_NATIONWIDE_RE = re.compile(
+    r"по всій україні|по всій території|у всіх областях|в усіх областях|"
+    r"загальнодержавн|масштабн\w*\s+(?:повітрян|трив)",
+    re.IGNORECASE,
+)
 _THREAT_RE = re.compile(
     r"ппо|обстріл|атак|ракет|балісти|шахед|дрон|вибух|тривог|укритт|удар|приліт|"
     r"кабом|запуск|загроз",
     re.IGNORECASE,
 )
-_SOURCE_RE = re.compile(r"кличко|кмва|квд|повітрян", re.IGNORECASE)  # авторитетне джерело
+_SOURCE_RE = re.compile(
+    r"кличко|кмва|квд|повітрян|зсу|генштаб", re.IGNORECASE
+)  # авторитетне джерело
 
 
-def find_kyiv_alert(now: datetime) -> FeedItem | None:
-    """Свіжий пост про повітряну загрозу/обстріл Києва в каналах-гігантах.
+def find_urgent_alert(now: datetime) -> FeedItem | None:
+    """Свіжий пост про повітряну загрозу/обстріл — Києва або по всій Україні —
+    в каналах-гігантах.
 
-    Такі новини (особливо від Кличка чи КМВА) — обов'язкові й невідкладні.
-    Достатньо ОДНОГО каналу (на відміну від консенсусу). Пріоритет — постам
-    з авторитетним джерелом і найбільше переглядів. Поститься завжди без
-    картинки (див. maybe_post_kyiv_alert) — заради швидкості пошук медіа
-    в інших каналах тут навмисно не робиться.
+    Такі новини (особливо від Кличка, КМВА чи Повітряних сил) — обов'язкові
+    й невідкладні. Достатньо ОДНОГО каналу (на відміну від консенсусу).
+    Пріоритет — постам з авторитетним джерелом і найбільше переглядів.
+    Поститься завжди без картинки (див. maybe_post_urgent_alert) — заради
+    швидкості пошук медіа в інших каналах тут навмисно не робиться.
     """
     window = config.KYIV_ALERT_AGE_MIN * 60
     best: TrendPost | None = None
@@ -260,7 +269,8 @@ def find_kyiv_alert(now: datetime) -> FeedItem | None:
         for p in fetch_channel(ch, now):
             if (now - p.published).total_seconds() > window:
                 continue
-            if not (_KYIV_RE.search(p.text) and _THREAT_RE.search(p.text)):
+            scoped = _KYIV_RE.search(p.text) or _NATIONWIDE_RE.search(p.text)
+            if not (scoped and _THREAT_RE.search(p.text)):
                 continue
             key = (1 if _SOURCE_RE.search(p.text) else 0, p.views)
             if key > best_key:
