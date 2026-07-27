@@ -15,15 +15,23 @@ _ASSETS = Path(__file__).resolve().parent / "assets" / "generic"
 
 _ZELENSKY_RE = re.compile(r"зеленськ", re.IGNORECASE)
 _PUTIN_RE = re.compile(r"путін", re.IGNORECASE)
+_RESHETYLOVA_RE = re.compile(r"решетилов", re.IGNORECASE)
 _TCK_RE = re.compile(r"\bтцк\b|територіальн\w*\s+центр\w*\s+комплектуванн", re.IGNORECASE)
 
 
 def pick_photo(text: str) -> bytes | None:
-    """Фото відомої персони за файлом з assets/generic/, або None."""
+    """Фото відомої персони за файлом з assets/generic/, або None.
+
+    Перевіряється ПЕРЕД картками установ (pick()) — новина-цитата конкретної
+    людини (напр. омбудсменки) має пріоритет над узагальненою карткою
+    установи, навіть якщо в тексті також згадується ця установа.
+    """
     if _ZELENSKY_RE.search(text):
         path = _ASSETS / "zelensky.jpg"
     elif _PUTIN_RE.search(text):
         path = _ASSETS / "putin.jpg"
+    elif _RESHETYLOVA_RE.search(text):
+        path = _ASSETS / "reshetylova.jpg"
     else:
         return None
     return path.read_bytes() if path.exists() else None
