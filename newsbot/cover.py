@@ -334,6 +334,40 @@ def make_institution_card(label: str, when: datetime) -> bytes:
     return buf.getvalue()
 
 
+def make_source_card(logo_bytes: bytes) -> bytes:
+    """Картка-бейдж для новини-цитати конкретного видання без власного фото
+    (напр. огляд BBC/Reuters без своєї ілюстрації): логотип видання на білій
+    плашці поверх фірмового градієнта каналу — контраст однаково підходить
+    і темним, і світлим логотипам."""
+    img = Image.new("RGB", (W, H))
+    draw = ImageDraw.Draw(img)
+    top, bottom = (11, 21, 48), (28, 48, 94)
+    for y in range(H):
+        t = y / H
+        draw.line(
+            [(0, y), (W, y)],
+            fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)),
+        )
+    draw.rectangle([0, H - 14, W, H], fill=(255, 197, 0))
+
+    badge_w, badge_h = 760, 340
+    bx, by = (W - badge_w) // 2, (H - badge_h) // 2 - 20
+    draw.rounded_rectangle([bx, by, bx + badge_w, by + badge_h], radius=28, fill=(255, 255, 255))
+
+    logo = Image.open(io.BytesIO(logo_bytes)).convert("RGBA")
+    pad = 90
+    max_w, max_h = badge_w - 2 * pad, badge_h - 2 * pad
+    scale = min(max_w / logo.width, max_h / logo.height)
+    lw, lh = max(1, int(logo.width * scale)), max(1, int(logo.height * scale))
+    logo = logo.resize((lw, lh), Image.LANCZOS)
+    lx, ly = bx + (badge_w - lw) // 2, by + (badge_h - lh) // 2
+    img.paste(logo, (lx, ly), logo)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    return buf.getvalue()
+
+
 def make_cover(title: str, when: datetime) -> bytes:
     img = Image.new("RGB", (W, H))
     draw = ImageDraw.Draw(img)

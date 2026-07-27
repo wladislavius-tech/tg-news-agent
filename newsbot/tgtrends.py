@@ -109,10 +109,15 @@ def clean_text(text: str) -> str:
     return " ".join(text.split()).strip()
 
 
-def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
-    """Свіжі змістовні пости одного каналу з публічної сторінки t.me/s/."""
+def fetch_channel(channel: str, now: datetime, before: int = 0) -> list[TrendPost]:
+    """Змістовні пости одного каналу з публічної сторінки t.me/s/.
+
+    before — id повідомлення, старіші за яке гортає прев'ю (пагінація t.me/s/,
+    та сама, що й на самій сторінці): 0 означає останню "живу" сторінку.
+    """
+    url = f"https://t.me/s/{channel}" + (f"?before={before}" if before else "")
     try:
-        html = _get(f"https://t.me/s/{channel}", proxy_fallback=True).text
+        html = _get(url, proxy_fallback=True).text
     except Exception as exc:  # noqa: BLE001
         log.warning("t.me/s/%s: %s", channel, exc)
         return []
@@ -163,6 +168,35 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
             ru_source_claim=ru_source_claim,
         ))
     return posts
+
+
+def fetch_channel_history(
+    channel: str, now: datetime, max_age_hours: float, max_pages: int = 6
+) -> list[TrendPost]:
+    """Як fetch_channel, але гортає історію глибше через ?before= (та сама
+    пагінація, що на самій сторінці t.me/s/), поки пости не старіші за
+    max_age_hours або не вичерпано max_pages сторінок.
+
+    Для max_age_hours у межах однієї "живої" сторінки (типово 3 год) зупиняється
+    вже на першій сторінці — без зайвих запитів. Потрібно для пошуку фото
+    ретроспективних новин (аналітична стаття про подію кількаденної давнини),
+    де саму подію інший канал міг висвітлити задовго до публікації в нас.
+    """
+    page = fetch_channel(channel, now)
+    all_posts = list(page)
+    seen_ids = {p.post_id for p in page}
+    for _ in range(max_pages - 1):
+        if not page:
+            break
+        oldest = min(page, key=lambda p: p.post_id)
+        if (now - oldest.published).total_seconds() > max_age_hours * 3600:
+            break
+        page = [p for p in fetch_channel(channel, now, before=oldest.post_id) if p.post_id not in seen_ids]
+        if not page:
+            break
+        seen_ids.update(p.post_id for p in page)
+        all_posts.extend(page)
+    return all_posts
 
 
 def fetch_trends(
@@ -243,7 +277,7 @@ def find_matching_media(
     for ch in config.TREND_CHANNELS:
         if ch == exclude_channel:
             continue
-        for p in fetch_channel(ch, now):
+        for p in fetch_channel_history(ch, now, max_age_hours):
             age = (now - p.published).total_seconds()
             if not (0 <= age <= max_age_hours * 3600):
                 continue

@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from itertools import zip_longest
 from zoneinfo import ZoneInfo
 
-from . import config, cover, genimage, generic_photos, llm, state as state_mod, tg, tgtrends, ukrnet
+from . import config, cover, genimage, generic_photos, llm, source_logos, state as state_mod, tg, tgtrends, ukrnet
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -164,13 +164,20 @@ def build_post(
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
             alt_image_url, _alt_video_url = tgtrends.find_matching_media(
-                item.description or item.title, now, exclude_channel=channel
+                item.description or item.title, now, exclude_channel=channel,
+                max_age_hours=config.RETRO_MEDIA_MAX_AGE_HOURS,
             )
             if alt_image_url:
                 image = ukrnet.download_image(alt_image_url)
-        if image is None:
-            image = generic_photos.pick(f"{item.title} {item.description or ''}", now)
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
+        if image is None:
+            # Лише тема новини (title), НЕ повний опис — прохідна згадка
+            # персони десь у тілі тексту (напр. "бізнесмени, близькі до
+            # путіна" у новині геть про інше) не має тригерити її фото.
+            # Лого видання-джерела — за РЕАЛЬНОЮ атрибуцією вже готового caption.
+            image = generic_photos.pick(item.title, now) or source_logos.pick(
+                llm.attributed_source(caption)
+            )
         if image:
             return caption, {"image": image}
         # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
@@ -226,7 +233,9 @@ def build_post(
 
     # 3) Власних фото немає — шукаємо цю ж подію в каналах-конкурентах
     if not images:
-        alt_image_url, _alt_video_url = tgtrends.find_matching_media(item.title, now)
+        alt_image_url, _alt_video_url = tgtrends.find_matching_media(
+            item.title, now, max_age_hours=config.RETRO_MEDIA_MAX_AGE_HOURS,
+        )
         if alt_image_url:
             img = ukrnet.download_image(alt_image_url)
             if img:
@@ -240,13 +249,22 @@ def build_post(
             caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
             return caption, {"youtube_url": youtube}
 
-    # 5) Узагальнене фото відомої персони/установи (президент, ТЦК тощо)
+    caption = llm.compose_post(item, sources, meta, **src_kwargs)
+
+    # 5) Узагальнене фото відомої персони/установи, або лого видання-джерела
+    # (президент, ТЦК, BBC/Reuters тощо) — caption уже готовий, бо логотип
+    # видання шукаємо за РЕАЛЬНОЮ атрибуцією поста, а не здогадом із сирих
+    # матеріалів (яких могло бути кілька, а AI обрала одне головне).
     if not images:
-        generic = generic_photos.pick(f"{item.title} {meta.description or ''}", now)
+        # Лише тема новини (title), НЕ повний опис — прохідна згадка персони
+        # десь у тілі статті не має тригерити її фото (новина може бути геть
+        # про інше й лише побіжно згадувати цю людину).
+        generic = generic_photos.pick(item.title, now) or source_logos.pick(
+            llm.attributed_source(caption)
+        )
         if generic:
             images = [generic]
 
-    caption = llm.compose_post(item, sources, meta, **src_kwargs)
     if len(images) > 1:
         return caption, {"album": images, "_img_url": first_image_url}
     if images:

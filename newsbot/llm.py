@@ -39,6 +39,18 @@ _ATTR_PHRASE_RE = re.compile(
 )
 
 
+_CAPTION_ATTR_RE = re.compile(r"<b>.*?,\s*—\s*([^<]+?)</b>")
+
+
+def attributed_source(caption: str) -> str:
+    """Дістає назву джерела з атрибуції в заголовку («, — Джерело») готового
+    HTML-підпису поста, або "" — якщо атрибуції немає. Для вибору фолбек-медіа
+    (source_logos.pick), яке має спрацьовувати саме на реальну атрибуцію
+    поста, а не здогад із сирих матеріалів до генерації тексту."""
+    m = _CAPTION_ATTR_RE.search(caption)
+    return m.group(1).strip() if m else ""
+
+
 def _is_pure_attribution_paragraph(paragraph: str, headline: str) -> bool:
     """Чи останній абзац лише повторює атрибуцію, вже вказану в headline через
     «, — Джерело» («Про це повідомляє X») — без жодного нового факту. Так само
