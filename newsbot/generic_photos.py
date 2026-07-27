@@ -16,6 +16,7 @@ _ASSETS = Path(__file__).resolve().parent / "assets" / "generic"
 _ZELENSKY_RE = re.compile(r"зеленськ", re.IGNORECASE)
 _PUTIN_RE = re.compile(r"путін", re.IGNORECASE)
 _RESHETYLOVA_RE = re.compile(r"решетилов", re.IGNORECASE)
+_TRUMP_RE = re.compile(r"трамп", re.IGNORECASE)
 _TCK_RE = re.compile(r"\bтцк\b|територіальн\w*\s+центр\w*\s+комплектуванн", re.IGNORECASE)
 
 
@@ -32,6 +33,8 @@ def pick_photo(text: str) -> bytes | None:
         path = _ASSETS / "putin.jpg"
     elif _RESHETYLOVA_RE.search(text):
         path = _ASSETS / "reshetylova.jpg"
+    elif _TRUMP_RE.search(text):
+        path = _ASSETS / "trump.jpg"
     else:
         return None
     return path.read_bytes() if path.exists() else None

@@ -173,7 +173,9 @@ def build_post(
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
         if image:
             return caption, {"image": image}
-        return caption, {"image": cover.make_cover(item.title, now)}
+        # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
+        # повторює текстом той самий заголовок (не несе інформації).
+        return caption, {}
 
     sources = ukrnet.fetch_cluster_sources(item.url)
     metas: dict[int, ukrnet.ArticleMeta] = {}
@@ -239,14 +241,14 @@ def build_post(
         if generic:
             images = [generic]
 
-    # 6) Шаблонна обкладинка (без AI-ілюстрації — лише реальні фото)
-    if not images:
-        images = [cover.make_cover(item.title, now)]
-
     caption = llm.compose_post(item, sources, meta, **src_kwargs)
     if len(images) > 1:
         return caption, {"album": images, "_img_url": first_image_url}
-    return caption, {"image": images[0], "_img_url": first_image_url}
+    if images:
+        return caption, {"image": images[0], "_img_url": first_image_url}
+    # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
+    # повторює текстом той самий заголовок (не несе інформації).
+    return caption, {}
 
 
 WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
@@ -471,8 +473,10 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
             print(f"[YouTube: {media['youtube_url']}]")
         elif "album" in media:
             print(f"[альбом: {len(media['album'])} фото]")
-        else:
+        elif "image" in media:
             print(f"[картинка: {len(media['image'])} байт]")
+        else:
+            print("[без картинки — текстовий пост]")
     else:
         message_id = tg.send_post(caption, **media)
         log.info("Опубліковано ✔: %r", item.title)

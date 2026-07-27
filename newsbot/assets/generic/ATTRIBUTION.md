@@ -16,6 +16,11 @@
 - Ліцензія: CC BY 3.0 / CC BY 4.0
 - Атрибуція: kremlin.ru
 
+## trump.jpg
+- Джерело: https://commons.wikimedia.org/wiki/File:Official_Presidential_Portrait_of_President_Donald_J._Trump_(2025).jpg
+- Автор: Daniel Torok (White House), 2025
+- Ліцензія: Public Domain (робота федерального службовця США при виконанні обов'язків)
+
 ## reshetylova.jpg
 - Джерело: https://commons.wikimedia.org/wiki/File:Ольга_Решетилова_(Кобилинська).jpg
 - Автор: armyinform.com.ua (агентство новин Міноборони України), 2025
