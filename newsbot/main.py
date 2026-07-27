@@ -68,12 +68,17 @@ def _news_score(it: ukrnet.FeedItem, now: datetime) -> float:
 
 
 def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) -> list[ukrnet.FeedItem]:
+    """Тут фільтруємо лише за ID (буквальний повтор статті) — схожість
+    заголовків НЕ виключає кандидата тут: розвиток події (зросла кількість
+    жертв, нова заява) часто має схожий заголовок на попередній пост, і
+    остаточне рішення "дубль чи розвиток" ухвалює семантична перевірка
+    llm.is_same_event нижче за течією (run()), а не грубий збіг слів."""
     max_age = timedelta(hours=config.MAX_AGE_HOURS)
     fresh = [
         it for it in items
         if it.related_count >= config.MIN_RELATED
         and now - it.published <= max_age
-        and not state_mod.is_duplicate(state, it.cluster_id, it.title)
+        and not state_mod.is_posted(state, it.cluster_id)
     ]
     fresh.sort(key=lambda it: _news_score(it, now), reverse=True)
     return fresh
@@ -93,7 +98,7 @@ def _pick_trend_fallback(
         if matched:
             matched.related_count = max(matched.related_count, it.related_count)
             it = matched
-        if state_mod.is_duplicate(state, it.cluster_id, it.title):
+        if state_mod.is_posted(state, it.cluster_id):
             continue
         if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
             log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
@@ -242,7 +247,7 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     викликається до всіх перевірок розкладу/лімітів. Єдиний захист — дубль.
     Повертає True, якщо алерт опубліковано (тоді решту постингу цього запуску пропускаємо)."""
     alert = tgtrends.find_urgent_alert(now)
-    if not alert or state_mod.is_duplicate(state, alert.cluster_id, alert.title):
+    if not alert or state_mod.is_posted(state, alert.cluster_id):
         return False
     recent = (state.get("daily") or {}).get("titles", [])[-20:]
     if recent and llm.is_same_event(alert.title, [], recent):
@@ -466,7 +471,7 @@ def maybe_post_consensus(state: dict, now: datetime, dry_run: bool, items: list)
     """Консенсус гігантів — термінова подія, публікуємо негайно. НЕ чіпає таймер
     звичайних новин (is_regular=False), тож їхній розклад лишається незалежним."""
     consensus = tgtrends.find_consensus(now)
-    if not consensus or state_mod.is_duplicate(state, consensus.cluster_id, consensus.title):
+    if not consensus or state_mod.is_posted(state, consensus.cluster_id):
         return
     recent = (state.get("daily") or {}).get("titles", [])[-20:]
     if recent and llm.is_same_event(consensus.title, [], recent):
@@ -531,7 +536,7 @@ def run(dry_run: bool, force: bool) -> None:
         )
         for trend in video_trends:
             vit = tgtrends.to_feed_item(trend)
-            if state_mod.is_duplicate(state, vit.cluster_id, vit.title):
+            if state_mod.is_posted(state, vit.cluster_id):
                 continue
             if recent_titles and llm.is_same_event(vit.title, [], recent_titles):
                 continue

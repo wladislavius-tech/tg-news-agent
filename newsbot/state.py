@@ -57,8 +57,22 @@ def _words(title: str) -> set[str]:
     return {w.lower() for w in _WORD_RE.findall(title) if len(w) > 3}
 
 
+def is_posted(state: dict, cluster_id: str) -> bool:
+    """Той самий кластер (URL) уже публікувався — однозначний дубль, без
+    винятків (на відміну від is_duplicate, тут нема місця для "розвитку
+    події": це буквально та сама стаття)."""
+    return cluster_id in state["posted_ids"]
+
+
 def is_duplicate(state: dict, cluster_id: str, title: str) -> bool:
-    """Дубль за ID або за схожістю заголовка (ID кластера з часом змінюється)."""
+    """Дубль за ID або за схожістю заголовка (ID кластера з часом змінюється).
+
+    УВАГА: схожість заголовків — це грубий сигнал "та сама подія", який не
+    відрізняє переказ від принципового розвитку (зросла кількість жертв,
+    нова заява тощо). Для рішення "постити чи ні" перед фінальним постом
+    краще is_posted() + llm.is_same_event() (семантична перевірка з winятком
+    для розвитку) — is_duplicate лишається для дешевого попереднього
+    відсіювання явно нерелевантного (напр. offline-дедуп без AI)."""
     if cluster_id in state["posted_ids"]:
         return True
     new_words = _words(title)
