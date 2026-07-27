@@ -126,15 +126,20 @@ def compose_post(
     source_url: str = "",
     source_name: str = "",
     require_ai: bool = False,
+    prior_context: str = "",
 ) -> str:
     """Повертає готовий підпис поста (HTML для Telegram).
 
     video_credit — автор/видання, чиє відео постимо (обов'язкове зазначення авторства).
     youtube_url — YouTube-відео новини; додається посиланням у пост.
     source_url/source_name — явне посилання на джерело (для трендів з TG-каналів).
+    prior_context — текст нашого попереднього поста про ЦЮ Ж подію, якщо нова
+    новина — принциповий розвиток (нові жертви, суд, нове рішення тощо):
+    просимо AI об'єднати старі й нові факти в один цілісний пост, як робить
+    «Україна Сейчас» (напр. новина про суд згадує кількість жертв нападу).
     """
     has_ai = bool(config.AI_AVAILABLE)
-    generated = _gemini_generate(item, sources, meta) if has_ai else None
+    generated = _gemini_generate(item, sources, meta, prior_context) if has_ai else None
     if generated:
         headline, body = generated
     else:
@@ -241,6 +246,60 @@ def is_same_event(title: str, alt_titles: list[str], recent_titles: list[str]) -
         temperature=0.1,
     )
     return bool(data and data.get("duplicate") is True)
+
+
+def classify_relation(
+    title: str, alt_titles: list[str], recent: list[tuple[str, str]]
+) -> tuple[str, str]:
+    """Триступенева версія is_same_event — розрізняє не лише "дубль/не дубль",
+    а й "розвиток однієї з подій" (щоб об'єднати з нею факти в один пост).
+
+    recent — сьогоднішні пости як пари (title, fact); fact — короткий текст
+    попереднього поста (для об'єднання, може бути "").
+    Повертає (relation, fact_context):
+    - ("duplicate", "")            — той самий факт іншими словами, не постити
+    - ("development", <текст>)     — принциповий розвиток однієї з recent;
+      <текст> — її fact, щоб compose_post() об'єднав старе й нове в один пост
+    - ("unrelated", "")            — інша подія, постити як звичайну новину
+    При збої AI чи порожньому recent — ("unrelated", ""), як і is_same_event.
+    """
+    if not recent or not config.AI_AVAILABLE:
+        return "unrelated", ""
+    alt = "\n".join(f"  (інші видання: {t})" for t in alt_titles[:4])
+    listing = "\n".join(f"{i + 1}. {t}" for i, (t, _f) in enumerate(recent))
+    data = _gemini_json(
+        f"Нова новина: «{title}»\n{alt}\n\n"
+        f"Уже опубліковані сьогодні пости каналу:\n{listing}\n\n"
+        f"Визнач стосунок нової новини до списку (звіряй суть події, місце, "
+        f"учасників, а не формулювання):\n"
+        f'- "duplicate" — той самий факт, просто інші слова/подробиці/ракурс '
+        f"(типовий випадок для перефразованих заголовків)\n"
+        f'- "development" — ПРИНЦИПОВИЙ розвиток ОДНІЄЇ з подій зі списку: '
+        f"зросла кількість жертв, ухвалено нове рішення, почався суд чи "
+        f"розслідування щодо тієї ж події, новий поворот чи наслідок\n"
+        f'- "unrelated" — зовсім інша подія, нічого спільного зі списком\n'
+        f'Якщо "development" — вкажи source: номер зі списку (1-based), з чим '
+        f"саме пов'язано.\n"
+        f'Відповідай строго JSON: {{"relation": "duplicate"|"development"|"unrelated", '
+        f'"source": N або null}}',
+        temperature=0.1,
+    )
+    if not data:
+        return "unrelated", ""
+    relation = str(data.get("relation", "unrelated"))
+    if relation == "duplicate":
+        return "duplicate", ""
+    if relation == "development":
+        try:
+            fact = recent[int(data.get("source")) - 1][1]
+        except (TypeError, ValueError, IndexError):
+            fact = ""
+        if fact:
+            return "development", fact
+        # Немає збереженого контексту для об'єднання (старий запис без fact) —
+        # постимо як звичайну новину, а не втрачаємо її мовчки.
+        return "unrelated", ""
+    return "unrelated", ""
 
 
 def fetch_observances(day: int, month_gen: str) -> list[str]:
@@ -434,8 +493,23 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
     return _groq_json(prompt, temperature) or _github_models_json(prompt, temperature)
 
 
+_DEVELOPMENT_ADDENDUM = """
+
+Це РОЗВИТОК події, про яку канал уже писав сьогодні. Ось той попередній пост
+(лише для контексту, не копіюй дослівно):
+{prior_context}
+
+Напиши ОДИН цілісний пост, що природно поєднує вже відомі факти з новим
+розвитком — щоб читач, який не бачив попереднього поста, зрозумів суть без
+нього (наприклад: новина про суд над організатором згадує кількість жертв
+нападу, без якого суд незрозумілий). НЕ пиши "як ми повідомляли раніше" чи
+подібні мета-посилання на власні минулі пости — просто виклади факти разом,
+як цілісну історію."""
+
+
 def _gemini_generate(
-    item: FeedItem, sources: list[SourceArticle], meta: ArticleMeta
+    item: FeedItem, sources: list[SourceArticle], meta: ArticleMeta,
+    prior_context: str = "",
 ) -> tuple[str, str] | None:
     alt_titles = "\n".join(f"- {s.title} ({s.domain})" for s in sources[:4]) or "- немає"
     # Для трендів з TG повний текст поста лежить у item.description
@@ -446,6 +520,8 @@ def _gemini_generate(
         body_excerpt=excerpt,
         alt_titles=alt_titles,
     )
+    if prior_context:
+        prompt += _DEVELOPMENT_ADDENDUM.format(prior_context=prior_context)
     data = _gemini_json(prompt, temperature=0.6)
     try:
         headline = str(data["headline"]).strip()

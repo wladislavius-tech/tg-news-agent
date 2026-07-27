@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import logging
 import random
+import re
 import sys
 import time
 from datetime import datetime, timedelta
+from itertools import zip_longest
 from zoneinfo import ZoneInfo
 
 from . import config, cover, genimage, generic_photos, llm, state as state_mod, tg, tgtrends, ukrnet
@@ -107,7 +110,9 @@ def _pick_trend_fallback(
     return None
 
 
-def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
+def build_post(
+    item: ukrnet.FeedItem, now: datetime, prior_context: str = ""
+) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
@@ -115,13 +120,19 @@ def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     фото немає) → узагальнене фото відомої персони/установи → обкладинка.
     Лише РЕАЛЬНІ фото — AI-ілюстрація новини принципово не використовується
     (може вводити в оману, видаючи вигадану сцену за реальне зображення події).
+
+    prior_context — якщо ця новина є розвитком уже опублікованої сьогодні
+    події (див. llm.classify_relation), сюди приходить текст того поста, щоб
+    об'єднати старе й нове в один цілісний пост.
     """
     src_kwargs: dict = {}
+    if prior_context:
+        src_kwargs["prior_context"] = prior_context
     if item.cluster_id.startswith("tg:"):
         # Тренд з Telegram-каналу: текст переписує Gemini (обов'язково)
         sources = []
         meta = ukrnet.ArticleMeta(description=item.description or item.title)
-        src_kwargs = {"require_ai": True}
+        src_kwargs["require_ai"] = True
         channel = item.cluster_id.removeprefix("tg:").split("/")[0]
         # Добірка кількох відео однієї теми — найцінніший формат (як у УС)
         if len(item.video_urls) >= config.VIDEO_ALBUM_MIN:
@@ -429,12 +440,21 @@ def maybe_post_digest(state: dict, now: datetime, dry_run: bool) -> None:
         state_mod.save(state)
 
 
+def _plain_fact(caption: str) -> str:
+    """Спрощений текст поста (без HTML-тегів і футера-підписки) — зберігається
+    в стані дня, щоб пізніше вплести ці факти в пост-розвиток тієї ж події."""
+    text = caption.split("\n\n📌", 1)[0]
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text).strip()
+
+
 def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
-                  dry_run: bool, is_regular: bool) -> bool:
+                  dry_run: bool, is_regular: bool, prior_context: str = "") -> bool:
     """Збирає й публікує один пост. Повертає True при успіху.
-    is_regular=True оновлює таймер звичайних новин; термінові пости — False."""
+    is_regular=True оновлює таймер звичайних новин; термінові пости — False.
+    prior_context — текст попереднього поста, якщо це його розвиток (об'єднати в один)."""
     try:
-        caption, media = build_post(item, now)
+        caption, media = build_post(item, now, prior_context)
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
@@ -460,7 +480,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
         image_url=img_url, is_video=is_video, is_regular=is_regular,
-        is_viral=item.is_viral, message_id=message_id,
+        is_viral=item.is_viral, message_id=message_id, fact=_plain_fact(caption),
     )
     if not dry_run:
         state_mod.save(state)
@@ -549,8 +569,23 @@ def run(dry_run: bool, force: bool) -> None:
     # Семантичний фільтр дублів: перефразовані заголовки тієї ж події.
     # Порівнюємо проти ВСІХ заголовків за сьогодні (+ хвіст на межі доби), а не
     # лише останніх 15 — інакше дубль за кілька годин випадає з вікна перевірки.
-    todays = (state.get("daily") or {}).get("titles", [])
-    recent = list(dict.fromkeys(todays + state["posted_titles"][-10:]))[-50:]
+    # recent — пари (title, fact): fact дає AI контекст, щоб не просто відкинути
+    # чи пропустити "розвиток" події, а об'єднати старі й нові факти в один пост.
+    daily = state.get("daily") or {}
+    todays_titles = daily.get("titles", [])
+    todays_facts = daily.get("facts", [])
+    today_pairs = list(zip_longest(todays_titles, todays_facts, fillvalue=""))
+    tail_pairs = [(t, "") for t in state["posted_titles"][-10:]]
+    seen_titles: set[str] = set()
+    recent: list[tuple[str, str]] = []
+    for t, f in today_pairs + tail_pairs:
+        if t in seen_titles:
+            continue
+        seen_titles.add(t)
+        recent.append((t, f))
+    recent = recent[-50:]
+
+    prior_context_by_id: dict[str, str] = {}
     filtered = []
     for cand in candidates[:2]:
         alt_titles: list[str] = []
@@ -559,13 +594,17 @@ def run(dry_run: bool, force: bool) -> None:
                 alt_titles = [s.title for s in ukrnet.fetch_cluster_sources(cand.url)]
             except Exception:  # noqa: BLE001
                 pass
-        if llm.is_same_event(cand.title, alt_titles, recent):
+        relation, fact = llm.classify_relation(cand.title, alt_titles, recent)
+        if relation == "duplicate":
             log.info("Семантичний дубль, пропускаю назавжди: %r", cand.title)
             state["posted_ids"].append(cand.cluster_id)
             state["posted_titles"].append(cand.title)
             if not dry_run:
                 state_mod.save(state)
         else:
+            if relation == "development":
+                log.info("Розвиток події — об'єдную з попереднім постом: %r", cand.title)
+                prior_context_by_id[cand.cluster_id] = fact
             filtered.append(cand)
     candidates = filtered + candidates[2:]
     if not candidates:
@@ -573,9 +612,14 @@ def run(dry_run: bool, force: bool) -> None:
         # ніж здатися (інакше затишшя на Укрнеті = мовчання каналу, навіть
         # коли інші великі канали вже щось запостили).
         fallback = _pick_trend_fallback(state, now, items)
-        if fallback and recent and llm.is_same_event(fallback.title, [], recent):
-            log.info("Тренд із Telegram теж дубль, пропускаю: %r", fallback.title)
-            fallback = None
+        if fallback and recent:
+            relation, fact = llm.classify_relation(fallback.title, [], recent)
+            if relation == "duplicate":
+                log.info("Тренд із Telegram теж дубль, пропускаю: %r", fallback.title)
+                fallback = None
+            elif relation == "development":
+                log.info("Тренд із Telegram — розвиток події: %r", fallback.title)
+                prior_context_by_id[fallback.cluster_id] = fact
         if fallback:
             candidates = [fallback]
             log.info("Усі новини Укрнету — дублі, беру тренд із Telegram: %r", fallback.title)
@@ -625,7 +669,8 @@ def run(dry_run: bool, force: bool) -> None:
             log.info("Пауза %.0f хв перед наступним постом", gap / 60)
             time.sleep(gap)
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
-        if _publish_item(state, item, now, dry_run, is_regular=True):
+        ctx = prior_context_by_id.get(item.cluster_id, "")
+        if _publish_item(state, item, now, dry_run, is_regular=True, prior_context=ctx):
             continue
         # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
         # беремо звичайну новину Укрнету, яка може вийти й без AI
@@ -636,7 +681,8 @@ def run(dry_run: bool, force: bool) -> None:
         )
         if fallback:
             log.info("Відкат на новину Укрнету: %r", fallback.title)
-            _publish_item(state, fallback, now, dry_run, is_regular=True)
+            fb_ctx = prior_context_by_id.get(fallback.cluster_id, "")
+            _publish_item(state, fallback, now, dry_run, is_regular=True, prior_context=fb_ctx)
 
 
 def main() -> None:
