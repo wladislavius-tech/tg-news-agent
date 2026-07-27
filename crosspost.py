@@ -95,10 +95,88 @@ _RU_TARGET_RE = re.compile(
     r"с-?400|переправ|окупант|катер",
     re.IGNORECASE,
 )
+# "росіяни вдарили", "рф атакувала" тощо — це рф як АТАКУЮЧИЙ (звичайний
+# обстріл України), протилежна ситуація до контрудару; без цього винятку
+# _RU_TARGET_RE хибно спрацьовував лише тому, що "росі" згадано десь у реченні.
+_RU_AS_ATTACKER_RE = re.compile(
+    r"(росі[яєюі]|рф)\w*\s+(вдарил|атакувал|обстріл|завдал.{0,15}удар|уразил|вразил)",
+    re.IGNORECASE,
+)
 
 
 def is_strike_news(text: str) -> bool:
+    if _RU_AS_ATTACKER_RE.search(text):
+        return False
     return bool(_STRIKE_VERB_RE.search(text) and _RU_TARGET_RE.search(text))
+
+
+# Скандали/корупція — теж пріоритетна категорія для кросспосту (поруч з ударами).
+_SCANDAL_RE = re.compile(
+    r"корупці|хабар|розтрат|привласнен|зловживанн|шахрайств|викрит.{0,15}схем|"
+    r"\bсап\b|\bнабу\b|\bдбр\b|\bбеб\b|оголосил.{0,15}підозр|скандал",
+    re.IGNORECASE,
+)
+
+
+def is_scandal(text: str) -> bool:
+    return bool(_SCANDAL_RE.search(text))
+
+
+def is_priority(text: str) -> bool:
+    """Пост, який слід перевагати без звернення до AI: контрудари/скандали."""
+    return is_strike_news(text) or is_scandal(text)
+
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+_GEMINI_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
+
+_COMPARE_PROMPT = """Ти редактор українського новинного каналу (тема: війна, Україна, світові події).
+Дано два коротких уривки новин. Обери, який ВАЖЛИВІШИЙ для суспільства прямо зараз —
+масштабніша подія, ширший вплив, гучніший резонанс. Якщо приблизно рівні за вагою — обери "a".
+
+Новина A: {a}
+
+Новина B: {b}
+
+Відповідай строго JSON: {{"winner": "a"}} або {{"winner": "b"}}."""
+
+
+def ai_pick_more_important(text_a: str, text_b: str) -> str:
+    """"a" чи "b" — яка новина важливіша для суспільства. Фолбек на "a"
+    (хронологічно перша), якщо ключа немає або запит не вдався жодною моделлю."""
+    if not GEMINI_API_KEY:
+        return "a"
+    prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
+    for model in _GEMINI_MODELS:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.2, "maxOutputTokens": 200,
+                    "responseMimeType": "application/json",
+                },
+            }
+            r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=30)
+            r.raise_for_status()
+            data = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
+            return "b" if data.get("winner") == "b" else "a"
+        except Exception as e:  # noqa: BLE001 — збій AI не критичний, є фолбек
+            print(f"[!] Gemini compare {model}: {e}")
+            continue
+    return "a"
+
+
+def pick_winner(pending: dict, candidate: dict) -> dict:
+    """З пари двох новин повертає ту, яку постимо в Threads."""
+    a_pri, b_pri = is_priority(pending["text"]), is_priority(candidate["text"])
+    if a_pri and not b_pri:
+        return pending
+    if b_pri and not a_pri:
+        return candidate
+    # обидва пріоритетні або жоден — просимо AI визначити важливішу
+    winner = ai_pick_more_important(pending["text"], candidate["text"])
+    return pending if winner == "a" else candidate
 
 
 def format_body(text: str, limit: int = 280) -> str:
@@ -191,6 +269,14 @@ def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | No
         return False
 
 
+PENDING_STALE_HOURS = 4  # якщо пара не зібралась так довго — постимо pending окремо
+
+
+def _hold(p: dict) -> dict:
+    return {"id": p["id"], "text": p["text"], "image": p.get("image"),
+            "seen_at": dt.datetime.now().isoformat(timespec="seconds")}
+
+
 def main() -> None:
     state = load_state()
     if state["last_posted_id"] == 0 and SEED_LAST_ID:
@@ -208,7 +294,9 @@ def main() -> None:
     # Порядок публікації лишається строго хронологічним (last_posted_id — це
     # водяний знак; переставляти чергу небезпечно — понизить його і призведе
     # або до повторної публікації, або до тихого пропуску старіших постів).
-    # "Ударні" новини піднімаємо не порядком, а тегом — див. is_strike_news нижче.
+    # Постимо не кожну новину, а одну з КОЖНОЇ ПАРИ — щоб не дублювати 1:1 усе,
+    # що вже є в каналі (див. state["pending"] нижче): перший news-пост пари
+    # тримаємо без публікації, з другим порівнюємо й публікуємо важливіший.
 
     if not fresh:
         print("Нових постів немає.")
@@ -216,25 +304,46 @@ def main() -> None:
         return
 
     posted = 0
+    pending = state.get("pending")
     for p in fresh:
         if posted >= MAX_PER_RUN:
             break
+
         if not is_news(p["text"]):
             # гороскоп/ранкова картка/дайджест — на Threads не постимо, просто йдемо далі
             state["last_posted_id"] = p["id"]
             save_state(state)
             continue
-        body = format_body(p["text"])
-        extra_tag = "#контрудар" if is_strike_news(p["text"]) else ""
-        print(f"Пост {p['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}{' [фото]' if p.get('image') else ''}")
-        if post_threads(token, body, extra_tag, p.get("image")):
-            print("  Threads: опубліковано")
+
+        if pending is None:
+            pending = _hold(p)
             state["last_posted_id"] = p["id"]
+            state["pending"] = pending
             save_state(state)
+            continue
+
+        stale = (dt.datetime.now() - dt.datetime.fromisoformat(pending["seen_at"])
+                  ) > dt.timedelta(hours=PENDING_STALE_HOURS)
+        winner = pending if stale else pick_winner(pending, p)
+
+        body = format_body(winner["text"])
+        extra_tag = "#контрудар" if is_strike_news(winner["text"]) else ""
+        print(f"Пара {pending['id']}/{p['id']}{' [прострочено]' if stale else ''} → "
+              f"пост {winner['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}"
+              f"{' [фото]' if winner.get('image') else ''}")
+        if post_threads(token, body, extra_tag, winner.get("image")):
+            print("  Threads: опубліковано")
             posted += 1
+            state["last_posted_id"] = p["id"]
+            # якщо pending прострочений, публікуємо його окремо, а p стає
+            # початком НОВОЇ пари (а не другим у щойно завершеній парі)
+            pending = _hold(p) if stale else None
+            state["pending"] = pending
+            save_state(state)
             time.sleep(3)
         else:
             print("  Threads: помилка — спробую наступного разу")
+            # watermark НЕ просунуто повз p — наступного разу повторимо ту саму пару
             break
     save_state(state)
     print(f"Готово. Опубліковано новин: {posted}")
