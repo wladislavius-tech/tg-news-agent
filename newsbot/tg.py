@@ -28,6 +28,21 @@ def send_sticker(file_id: str) -> None:
     _call("sendSticker", data={"chat_id": config.TELEGRAM_CHANNEL, "sticker": file_id})
 
 
+def edit_message_text(message_id: int, text: str) -> None:
+    """Редагує вже опублікований текстовий пост (напр. дописати відбій тривоги
+    в терміновий алерт замість окремого повідомлення)."""
+    _call(
+        "editMessageText",
+        data={
+            "chat_id": config.TELEGRAM_CHANNEL,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "link_preview_options": '{"is_disabled": true}',
+        },
+    )
+
+
 def send_admin(text: str) -> None:
     """Сповіщення власнику в особисті. Збій сповіщення не має валити агента."""
     if not config.TELEGRAM_ADMIN_CHAT:

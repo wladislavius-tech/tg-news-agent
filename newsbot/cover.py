@@ -66,34 +66,54 @@ def _panel(draw, box, radius=22, fill=(20, 34, 70), outline=(58, 80, 130)):
 
 
 def _make_background(Wc: int, Hc: int, photo: bytes | None) -> Image.Image:
-    """Тло картки: атмосферне фото під сильним темно-синім затемненням (гармонія
-    й читабельність) або градієнт, якщо фото немає."""
+    """Тло картки: атмосферне фото під м'яким затемненням (кольори лишаються
+    насиченими й видимими, а не тонуть у суцільній темряві) або багатший
+    градієнт з теплим акцентним сяйвом зверху, якщо фото немає."""
     base = Image.new("RGB", (Wc, Hc), (12, 20, 46))
     if photo:
         try:
-            from PIL import ImageFilter, ImageOps
+            from PIL import ImageEnhance, ImageFilter, ImageOps
 
             bg = Image.open(io.BytesIO(photo)).convert("RGB")
-            bg = ImageOps.fit(bg, (Wc, Hc)).filter(ImageFilter.GaussianBlur(3))
+            bg = ImageOps.fit(bg, (Wc, Hc)).filter(ImageFilter.GaussianBlur(2))
+            bg = ImageEnhance.Color(bg).enhance(1.25)
+            bg = ImageEnhance.Contrast(bg).enhance(1.08)
             base = bg
         except Exception:  # noqa: BLE001
             photo = None
     canvas = base.convert("RGBA")
     if photo:
-        # Вертикальний темно-синій градієнт-вуаль: зверху щільніший
+        # М'якша вуаль, ніж раніше (було 205→150) — фото лишається читабельним,
+        # але не сірим/пласким
         veil = Image.new("RGBA", (Wc, Hc))
         vd = ImageDraw.Draw(veil)
         for y in range(Hc):
-            a = int(205 - 55 * (y / Hc))  # 205 → 150
+            a = int(150 - 60 * (y / Hc))  # 150 → 90
             vd.line([(0, y), (Wc, y)], fill=(9, 16, 38, a))
         canvas = Image.alpha_composite(canvas, veil)
     else:
+        # Тришаровий градієнт (темно-синій → синій → приглушений фіолетовий)
+        # замість плаского двоколірного — виглядає глибше й насиченіше
         gd = ImageDraw.Draw(canvas)
-        top, bottom = (9, 17, 40), (26, 46, 92)
+        stops = [(9, 17, 40), (23, 40, 82), (36, 30, 68)]
         for y in range(Hc):
             t = y / Hc
+            if t < 0.6:
+                a, b, lt = stops[0], stops[1], t / 0.6
+            else:
+                a, b, lt = stops[1], stops[2], (t - 0.6) / 0.4
             gd.line([(0, y), (Wc, y)],
-                    fill=tuple(int(a + (b - a) * t) for a, b in zip(top, bottom)) + (255,))
+                    fill=tuple(int(ac + (bc - ac) * lt) for ac, bc in zip(a, b)) + (255,))
+
+    # Тепле акцентне сяйво зверху зліва (під брендовою плашкою) — додає глибини
+    # й фірмового кольору навіть на найпростішому градієнтному тлі
+    glow = Image.new("RGBA", (Wc, Hc), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(glow)
+    gx, gy, gr = Wc * 0.2, Hc * 0.05, Wc * 0.55
+    for r in range(int(gr), 0, -10):
+        a = int(24 * (1 - r / gr))
+        gdraw.ellipse([gx - r, gy - r, gx + r, gy + r], fill=(255, 197, 0, a))
+    canvas = Image.alpha_composite(canvas, glow)
     return canvas.convert("RGB")
 
 
@@ -125,7 +145,9 @@ def make_morning_card(
     background: bytes | None = None,
 ) -> bytes:
     """Ранкова інфокартка: фонове фото + курси валют + ціни пального + пам'ятні дні."""
-    Wc, Hc = 1080, 1500
+    # 4:5 — надто вузькі/високі фото (був 1080×1500 = 0.72) Telegram у стрічці
+    # обрізає вертикально, лишаючи чорні смуги по краях; 4:5 показує на весь екран.
+    Wc, Hc = 1080, 1350
     img = _make_background(Wc, Hc, background)
     draw = ImageDraw.Draw(img)
     m = 56  # зовнішнє поле
@@ -146,18 +168,18 @@ def make_morning_card(
               font=_font(36), fill=(255, 235, 235), anchor="mm")
 
     card_w = (Wc - 2 * m - 28) // 2
-    card_h = 168
+    card_h = 140
 
     def section_grid(title, note, cells, y0):
         draw.text((m, y0), title, font=_font(40), fill=(255, 197, 0))
         if note:
             draw.text((Wc - m, y0 + 6), note, font=_font(26), fill=(150, 168, 205), anchor="ra")
-        y0 += 62
+        y0 += 58
         for idx, (label, value, unit, ref) in enumerate(cells):
             cx = m + (idx % 2) * (card_w + 28)
-            cy = y0 + (idx // 2) * (card_h + 22)
+            cy = y0 + (idx // 2) * (card_h + 18)
             _value_card(draw, cx, cy, card_w, card_h, label, value, unit, ref)
-        return y0 + 2 * card_h + 22 + 42
+        return y0 + 2 * card_h + 18 + 32
 
     # --- КУРС ВАЛЮТ ---
     def fmt(code):
@@ -171,7 +193,7 @@ def make_morning_card(
         ("ЗЛОТИЙ • PLN", *fmt("PLN"), (rates.get("PLN"), prev_rates.get("PLN"))),
         ("БІТКОЇН • BTC", *fmt("BTC"), (rates.get("BTC"), prev_rates.get("BTC"))),
     ]
-    y0 = section_grid("КУРС ВАЛЮТ", "за даними НБУ", cur_cells, 268)
+    y0 = section_grid("КУРС ВАЛЮТ", "за даними НБУ", cur_cells, 250)
 
     # --- ВАРТІСТЬ ПАЛЬНОГО ---
     def fuf(code):

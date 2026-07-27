@@ -60,7 +60,7 @@ _HEADLINE_EMOJI_SLUG = [
 ]
 
 
-def _slug_for(headline: str, source_text: str) -> str | None:
+def _weapon_slug(source_text: str) -> str | None:
     if _SHAHED_RE.search(source_text):
         return "30_shahed"
     if _CRUISE_RE.search(source_text):
@@ -71,25 +71,38 @@ def _slug_for(headline: str, source_text: str) -> str | None:
         return "33_drone_fp1"
     if _EXPLOSION_RE.search(source_text):
         return "29_explosion"
-    stripped = headline.lstrip()
-    for emoji, slug in _HEADLINE_EMOJI_SLUG:
-        if stripped.startswith(emoji):
-            return slug
     return None
 
 
-def pick_html(headline: str, source_text: str) -> str:
-    """HTML-тег <tg-emoji> для вставки на початок headline, або "" — якщо
-    певного збігу немає. Краще без емодзі, ніж випадковий/недоречний.
+def apply_to_headline(headline: str, source_text: str) -> str:
+    """Вбудовує custom emoji в headline, без дублювання видимого символу.
 
-    headline — ще не заекранований заголовок від Gemini (беремо його власний
-    провідний емодзі, якщо зброю не впізнали); source_text — сирий текст
-    новини (заголовок + опис) для впізнавання типу зброї.
+    Пріоритет 1 (тип зброї за source_text) — на початку headline такого
+    символу ще немає, тож емодзі ДОДАЄТЬСЯ. Пріоритет 2 (headline вже
+    починається зі свого емодзі за легендою Gemini) — цей символ уже є в
+    тексті, тож він ЗАМІНЮЄТЬСЯ на анімовану версію (не додається другий).
+    Без збігу — headline лишається без змін.
+
+    headline — вже заекранований (html.escape) заголовок, як він піде в
+    <b>...</b>; source_text — сирий текст новини (заголовок+опис) для
+    впізнавання типу зброї.
     """
-    slug = _slug_for(headline, source_text)
-    if not slug:
-        return ""
-    emoji_id = CUSTOM_EMOJI_IDS.get(slug)
-    if not emoji_id:
-        return ""
-    return f'<tg-emoji emoji-id="{emoji_id}">{_GLYPH.get(slug, "🔥")}</tg-emoji> '
+    weapon_slug = _weapon_slug(source_text)
+    if weapon_slug:
+        emoji_id = CUSTOM_EMOJI_IDS.get(weapon_slug)
+        if emoji_id:
+            tag = f'<tg-emoji emoji-id="{emoji_id}">{_GLYPH[weapon_slug]}</tg-emoji>'
+            leading_ws = headline[: len(headline) - len(headline.lstrip())]
+            return f"{leading_ws}{tag} {headline.lstrip()}"
+        return headline
+
+    stripped = headline.lstrip()
+    leading_ws = headline[: len(headline) - len(stripped)]
+    for emoji, slug in _HEADLINE_EMOJI_SLUG:
+        if stripped.startswith(emoji):
+            emoji_id = CUSTOM_EMOJI_IDS.get(slug)
+            if not emoji_id:
+                return headline
+            tag = f'<tg-emoji emoji-id="{emoji_id}">{emoji}</tg-emoji>'
+            return f"{leading_ws}{tag}{stripped[len(emoji):]}"
+    return headline

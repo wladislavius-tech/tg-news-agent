@@ -242,13 +242,16 @@ _NATIONWIDE_RE = re.compile(
     r"загальнодержавн|масштабн\w*\s+(?:повітрян|трив)",
     re.IGNORECASE,
 )
-_ALERT_PHRASE_RE = re.compile(
+_ALERT_START_RE = re.compile(
     r"повітряна тривога|повітряну тривогу|повітряної тривоги|оголошено тривогу|"
-    r"відбій тривоги|загроза балісти|загроза ракетн|загроза удар\w*|загроза бпла|"
+    r"загроза балісти|загроза ракетн|загроза удар\w*|загроза бпла|"
     r"загроза дрон|загроза застосування|загроза обстрілу|ракетна небезпека|"
     r"ракетну небезпеку|зафіксовано пуск|повітряна небезпека|повітряну небезпеку",
     re.IGNORECASE,
 )
+# "Відбій" — окремо від початку тривоги: це НЕ нова загроза, а закриття вже
+# опублікованого алерту (дописуємо в те саме повідомлення, не постимо окремо).
+_ALL_CLEAR_RE = re.compile(r"відбій тривоги|відбій повітряної|^\s*відбій\b", re.IGNORECASE)
 _SOURCE_RE = re.compile(
     r"кличко|кмва|квд|повітрян|зсу|генштаб", re.IGNORECASE
 )  # авторитетне джерело
@@ -272,8 +275,9 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
     Окремі слова типу "дрон"/"обстріл"/"атак" НЕ вважаємо ознакою загрози —
     вони трапляються в масі мирних новин (дипломатія, техніка, аналітика).
     Замість цього шукаємо СТІЙКІ ФРАЗИ офіційних сповіщень (Кличко/КМВА/
-    Повітряні сили): "повітряна тривога", "загроза балістики", "відбій
-    тривоги" тощо — так, як вони реально пишуть у момент оголошення.
+    Повітряні сили): "повітряна тривога", "загроза балістики" тощо — так,
+    як вони реально пишуть у момент оголошення. "Відбій" сюди НЕ належить —
+    його шукає окремо find_all_clear (закриває вже опублікований алерт).
     """
     window = config.KYIV_ALERT_AGE_MIN * 60
     lead_chars = 250
@@ -284,7 +288,7 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
             if (now - p.published).total_seconds() > window:
                 continue
             lead = p.text[:lead_chars]
-            if not _ALERT_PHRASE_RE.search(lead):
+            if not _ALERT_START_RE.search(lead):
                 continue
             scoped = _KYIV_RE.search(lead) or _NATIONWIDE_RE.search(lead)
             if not scoped:
@@ -293,6 +297,30 @@ def find_urgent_alert(now: datetime) -> FeedItem | None:
             if key > best_key:
                 best, best_key = p, key
     return to_feed_item(best) if best else None
+
+
+def find_all_clear(after: datetime, now: datetime) -> TrendPost | None:
+    """Свіжий пост-"відбій" (закриття вже опублікованої тривоги) — новіший за
+    `after` (час публікації нашого алерту). Скоуп (Київ/по всій Україні) тут
+    навмисно не перевіряємо: відбій зазвичай коротший за початкову тривогу
+    ("🔵 Відбій") і вже прив'язаний до конкретного активного алерту в стані.
+    """
+    window = config.KYIV_ALERT_AGE_MIN * 60
+    best: TrendPost | None = None
+    best_key = (-1, 0)
+    for ch in config.CONSENSUS_CHANNELS:
+        for p in fetch_channel(ch, now):
+            if p.published <= after:
+                continue
+            if (now - p.published).total_seconds() > window:
+                continue
+            lead = p.text[:150]
+            if not _ALL_CLEAR_RE.search(lead):
+                continue
+            key = (1 if _SOURCE_RE.search(lead) else 0, p.views)
+            if key > best_key:
+                best, best_key = p, key
+    return best
 
 
 def find_consensus(now: datetime) -> FeedItem | None:

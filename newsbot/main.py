@@ -233,8 +233,54 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     message_id = tg.send_post(caption)  # текстовий пост, без картинки
     log.info("Терміновий алерт опубліковано ✔: %r", alert.title)
     state_mod.remember_post(state, alert.cluster_id, alert.title, now, message_id=message_id)
+    if message_id:
+        state["active_alert"] = {
+            "message_id": message_id, "posted_at": now.isoformat(), "caption": caption,
+        }
     state_mod.save(state)
     return True
+
+
+def maybe_post_alert_allclear(state: dict, now: datetime, dry_run: bool) -> None:
+    """Коли для вже опублікованого термінового алерту приходить "відбій" —
+    дописуємо його в ТЕ САМЕ повідомлення (editMessageText), а не постимо
+    окремим постом."""
+    active = state.get("active_alert")
+    if not active:
+        return
+    posted_at = datetime.fromisoformat(active["posted_at"])
+    age_min = (now - posted_at).total_seconds() / 60
+    if age_min > config.ALERT_ALLCLEAR_MAX_AGE_MIN:
+        state["active_alert"] = None  # застарів, більше не чекаємо на відбій
+        if not dry_run:
+            state_mod.save(state)
+        return
+    clear_post = tgtrends.find_all_clear(posted_at, now)
+    if not clear_post:
+        return
+    addendum = f"🔵 Оновлено о {now.strftime('%H:%M')} — тривогу скасовано."
+    # Вставляємо ПЕРЕД футером-підпискою, а не в кінець — щоб дописка йшла
+    # одразу за суттю алерту, а не губилась після посилання "підписатися".
+    marker = '\n\n📌 <a href="'
+    if marker in active["caption"]:
+        head, _, tail = active["caption"].partition(marker)
+        edited_caption = f"{head}\n\n{addendum}{marker}{tail}"
+    else:
+        edited_caption = f'{active["caption"]}\n\n{addendum}'
+    if dry_run:
+        print("=" * 60)
+        print("[ВІДБІЙ — дописую в терміновий алерт]")
+        print(edited_caption)
+    else:
+        try:
+            tg.edit_message_text(active["message_id"], edited_caption)
+            log.info("Відбій дописано в алерт ✔ (message_id=%s)", active["message_id"])
+        except Exception:  # noqa: BLE001 — не критично, наступний тик спробує ще раз
+            log.warning("Не вдалося дописати відбій у повідомлення %s", active["message_id"])
+            return
+    state["active_alert"] = None
+    if not dry_run:
+        state_mod.save(state)
 
 
 def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
@@ -420,7 +466,9 @@ def run(dry_run: bool, force: bool) -> None:
     # --- Термінові пости: публікуються негайно, НЕ зсувають розклад звичайних ---
     # (терміновий алерт і консенсус гігантів не чіпають таймер звичайних новин)
     if not first_run:
-        maybe_post_urgent_alert(state, now, dry_run)
+        posted_new_alert = maybe_post_urgent_alert(state, now, dry_run)
+        if not posted_new_alert:
+            maybe_post_alert_allclear(state, now, dry_run)
 
     # --- Рубрики за своїм часом ---
     maybe_post_morning(state, now, dry_run)
