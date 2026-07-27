@@ -24,6 +24,7 @@ class FeedItem:
     video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи поста
     image_url: str = ""     # фото поста (для консенсус-новин з TG-каналів)
     is_viral: bool = False  # тренд без явного зв'язку з Україною/війною (квота у config.VIRAL_QUOTA_MAX)
+    ru_source_claim: bool = False  # репост рос. моніторингового каналу ("противник" = Україна), див. tgtrends._RU_MONITOR_RE
 
 
 @dataclass

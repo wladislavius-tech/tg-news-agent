@@ -42,6 +42,21 @@ def _looks_russian(text: str) -> bool:
     return ru >= 3 and ru > ua
 
 
+# Репости російських моніторингових/попереджувальних каналів ("Радар РВК" тощо) —
+# слово "противник" у них означає УКРАЇНУ (з погляду росіян, це їхній супротивник),
+# а не навпаки. Реальний кейс: канал-джерело репостнув скріншот такого каналу з
+# написом "противник планирует запустить от 1000 БПЛА" (по рос. областях —
+# перелік цілей був видно лише на скріншоті, у скрейпленому тексті його нема).
+# AI переклала "противник" як звичне "ворог" і вийшов пост, ніби це рф готує удар
+# по Україні — сенс перевернувся на протилежний. Замість пропуску такого поста
+# ставимо позначку (TrendPost.ru_source_claim) — llm.py додає до промпту явну
+# поправку напрямку й вимогу позначити новину як неперевірену.
+_RU_MONITOR_RE = re.compile(
+    r"\bпротивник\w*\b|росі[йи]ськ\w*\s*(?:моніт\w*|монитор\w*|пво)\b|радар рвк",
+    re.IGNORECASE,
+)
+
+
 # Ключові слова, що вказують на зв'язок з Україною/війною/світовою політикою.
 # Джерела — TREND_CHANNELS — часом дають пости російською (цитати, репости),
 # що не відсіюються _looks_russian (немає літер ы/э/ъ/ё) — тому словник охоплює
@@ -76,6 +91,7 @@ class TrendPost:
     video_url: str = ""  # пряме коротке відео з t.me CDN (перше)
     video_urls: list[str] = field(default_factory=list)  # усі відео медіа-групи
     image_url: str = ""  # фото поста (для консенсус-новин)
+    ru_source_claim: bool = False  # репост рос. моніторингового каналу, див. _RU_MONITOR_RE
 
 
 def _parse_views(raw: str) -> int:
@@ -111,6 +127,7 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
         text = clean_text(text_el.get_text(" ", strip=True)) if text_el else ""
         if len(text) < config.TREND_MIN_TEXT or _AD_RE.search(text) or _looks_russian(text):
             continue
+        ru_source_claim = bool(_RU_MONITOR_RE.search(text))
         views_el = msg.select_one(".tgme_widget_message_views")
         views = _parse_views(views_el.get_text(strip=True)) if views_el else 0
         time_el = msg.select_one("time[datetime]")
@@ -143,6 +160,7 @@ def fetch_channel(channel: str, now: datetime) -> list[TrendPost]:
             video_url=video_urls[0] if video_urls else "",
             video_urls=video_urls,
             image_url=image_url,
+            ru_source_claim=ru_source_claim,
         ))
     return posts
 
@@ -191,6 +209,7 @@ def to_feed_item(post: TrendPost) -> FeedItem:
         video_urls=post.video_urls,
         image_url=post.image_url,
         is_viral=is_off_topic(post.text),
+        ru_source_claim=post.ru_source_claim,
     )
 
 
