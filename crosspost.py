@@ -129,6 +129,10 @@ def is_priority(text: str) -> bool:
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 _GEMINI_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
+GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
 
 _COMPARE_PROMPT = """Ти редактор українського новинного каналу (тема: війна, Україна, світові події).
 Дано два коротких уривки новин. Обери, який ВАЖЛИВІШИЙ для суспільства прямо зараз —
@@ -141,12 +145,9 @@ _COMPARE_PROMPT = """Ти редактор українського новинн
 Відповідай строго JSON: {{"winner": "a"}} або {{"winner": "b"}}."""
 
 
-def ai_pick_more_important(text_a: str, text_b: str) -> str:
-    """"a" чи "b" — яка новина важливіша для суспільства. Фолбек на "a"
-    (хронологічно перша), якщо ключа немає або запит не вдався жодною моделлю."""
+def _gemini_compare(prompt: str) -> dict | None:
     if not GEMINI_API_KEY:
-        return "a"
-    prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
+        return None
     for model in _GEMINI_MODELS:
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -159,12 +160,67 @@ def ai_pick_more_important(text_a: str, text_b: str) -> str:
             }
             r = requests.post(url, params={"key": GEMINI_API_KEY}, json=payload, timeout=30)
             r.raise_for_status()
-            data = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
-            return "b" if data.get("winner") == "b" else "a"
-        except Exception as e:  # noqa: BLE001 — збій AI не критичний, є фолбек
+            return json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
+        except Exception as e:  # noqa: BLE001 — збій одного провайдера не критичний
             print(f"[!] Gemini compare {model}: {e}")
             continue
-    return "a"
+    return None
+
+
+def _groq_compare(prompt: str) -> dict | None:
+    if not GROQ_API_KEY:
+        return None
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2, "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[!] Groq compare: {e}")
+        return None
+
+
+def _github_models_compare(prompt: str) -> dict | None:
+    if not GITHUB_TOKEN:
+        return None
+    try:
+        r = requests.post(
+            "https://models.github.ai/inference/chat/completions",
+            headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
+            json={
+                "model": GITHUB_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2, "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[!] GitHub Models compare: {e}")
+        return None
+
+
+def ai_pick_more_important(text_a: str, text_b: str) -> str:
+    """"a" чи "b" — яка новина важливіша для суспільства. Каскад провайдерів
+    (як newsbot/llm.py): Gemini → Groq → GitHub Models — наступний вмикається,
+    лише коли попередній без квоти чи впав. Фолбек на "a" (хронологічно
+    перша), якщо жоден не відповів."""
+    prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
+    data = _gemini_compare(prompt) or _groq_compare(prompt) or _github_models_compare(prompt)
+    if not data:
+        return "a"
+    return "b" if data.get("winner") == "b" else "a"
 
 
 def pick_winner(pending: dict, candidate: dict) -> dict:
