@@ -79,6 +79,29 @@ def pick_candidates(items: list[ukrnet.FeedItem], state: dict, now: datetime) ->
     return fresh
 
 
+def _pick_trend_fallback(
+    state: dict, now: datetime, items: list[ukrnet.FeedItem]
+) -> ukrnet.FeedItem | None:
+    """Гарячий пост великого TG-каналу як кандидат — коли Укрнет не дав жодного
+    придатного варіанту: ні напряму (стрічка порожня), ні опосередковано (усі
+    знайдені кандидати виявились семантичними дублями вже опублікованого).
+    Якщо ця ж подія є на Укрнеті — повертає укрнетівський кластер (фото й
+    описи від видань-першоджерел), інакше — сам тренд для переписування AI."""
+    for trend in tgtrends.fetch_trends(now):
+        it = tgtrends.to_feed_item(trend)
+        matched = tgtrends.match_feed_item(trend.text, items)
+        if matched:
+            matched.related_count = max(matched.related_count, it.related_count)
+            it = matched
+        if state_mod.is_duplicate(state, it.cluster_id, it.title):
+            continue
+        if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
+            log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
+            continue
+        return it
+    return None
+
+
 def build_post(item: ukrnet.FeedItem, now: datetime) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
@@ -488,20 +511,10 @@ def run(dry_run: bool, force: bool) -> None:
         # Резерв: гарячі пости великих Telegram-каналів (пишемо власний текст).
         # Якщо ця ж подія є на Укрнеті — постимо укрнетівський кластер:
         # звичайний конвеєр дасть фото і описи від видань-першоджерел.
-        for trend in tgtrends.fetch_trends(now):
-            it = tgtrends.to_feed_item(trend)
-            matched = tgtrends.match_feed_item(trend.text, items)
-            if matched:
-                matched.related_count = max(matched.related_count, it.related_count)
-                it = matched
-            if state_mod.is_duplicate(state, it.cluster_id, it.title):
-                continue
-            if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
-                log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
-                continue
-            candidates = [it]
-            log.info("Укрнет без кандидатів, беру тренд із Telegram: %r", it.title)
-            break
+        fallback = _pick_trend_fallback(state, now, items)
+        if fallback:
+            candidates = [fallback]
+            log.info("Укрнет без кандидатів, беру тренд із Telegram: %r", fallback.title)
     if not candidates:
         log.info("Нових новин, вартих поста, немає")
         return
@@ -551,8 +564,19 @@ def run(dry_run: bool, force: bool) -> None:
             filtered.append(cand)
     candidates = filtered + candidates[2:]
     if not candidates:
-        log.info("Все нове — дублі вже опублікованого")
-        return
+        # Усі кандидати Укрнету виявились дублями — пробуємо TG-тренди, перш
+        # ніж здатися (інакше затишшя на Укрнеті = мовчання каналу, навіть
+        # коли інші великі канали вже щось запостили).
+        fallback = _pick_trend_fallback(state, now, items)
+        if fallback and recent and llm.is_same_event(fallback.title, [], recent):
+            log.info("Тренд із Telegram теж дубль, пропускаю: %r", fallback.title)
+            fallback = None
+        if fallback:
+            candidates = [fallback]
+            log.info("Усі новини Укрнету — дублі, беру тренд із Telegram: %r", fallback.title)
+        else:
+            log.info("Все нове — дублі вже опублікованого")
+            return
 
     top = candidates[0]
     # Розклад звичайних новин — за ВЛАСНИМ таймером, не зсувається алертами/консенсусом
