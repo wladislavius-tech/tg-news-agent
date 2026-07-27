@@ -205,6 +205,11 @@ def build_post(
     first_image_url = ""  # для колажу вечірнього дайджесту
     seen_hashes: set[str] = set()
     for i in range(min(len(sources), tries)):
+        # sources[0] задає тему підпису (meta = src_meta(0)) — інші джерела
+        # кластера перевіряємо на спорідненість, щоб не тягнути в альбом
+        # фото геть іншого інциденту того самого дня.
+        if i > 0 and not _topically_related(sources[0].title, sources[i].title):
+            continue
         m = src_meta(i)
         img = ukrnet.download_image(m.image_url)
         if img:
@@ -448,6 +453,26 @@ def _plain_fact(caption: str) -> str:
     text = caption.split("\n\n📌", 1)[0]
     text = re.sub(r"<[^>]+>", "", text)
     return html.unescape(text).strip()
+
+
+_ALBUM_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
+
+
+def _topically_related(title_a: str, title_b: str) -> bool:
+    """Чи стосуються два заголовки тієї ж конкретної під-події, а не просто
+    "того самого дня обстрілів". Укрнет інколи кластерить кілька РІЗНИХ
+    інцидентів одного дня (напр. знищений ТЦ + чийсь будинок + поранена
+    дитина) в один кластер — без цієї перевірки фото з чужої статті
+    кластера потрапляє в альбом під текстом про зовсім іншу подію."""
+    wa = {w.lower() for w in _ALBUM_WORD_RE.findall(title_a)}
+    wb = {w.lower() for w in _ALBUM_WORD_RE.findall(title_b)}
+    if not wa or not wb:
+        return True  # нема з чим звірити — не блокуємо
+    overlap = wa & wb
+    # Поріг навмисно нижчий, ніж у tgtrends._same_topic (0.28) — українські
+    # відмінки ("одещини" проти "одеси", "моряків" проти "моряки") й так
+    # занижують перетин слів навіть для однієї події.
+    return len(overlap) >= 2 and len(overlap) / min(len(wa), len(wb)) >= 0.18
 
 
 def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
