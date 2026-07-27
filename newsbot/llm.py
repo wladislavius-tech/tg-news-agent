@@ -30,6 +30,27 @@ def _is_redundant_paragraph(headline: str, paragraph: str) -> bool:
         return False
     return len(h_words & p_words) / len(h_words) >= 0.6
 
+
+_HEADLINE_ATTR_RE = re.compile(r",\s*—\s*(.+?)\s*$")
+_ATTR_PHRASE_RE = re.compile(
+    r"(?:цю інформацію|про це|за (?:даними|інформацією)|з посиланням на)"
+    r".{0,60}?(?:повідомля\w*|пиш\w*|поінформ\w*|заяв\w*)",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_attribution_paragraph(paragraph: str, headline: str) -> bool:
+    """Чи останній абзац лише повторює атрибуцію, вже вказану в headline через
+    «, — Джерело» («Про це повідомляє X») — без жодного нового факту. Так само
+    промпт це не завжди зупиняє через резервні провайдери, тож підстраховуємось."""
+    m = _HEADLINE_ATTR_RE.search(headline)
+    if not m or not _ATTR_PHRASE_RE.search(paragraph):
+        return False
+    source_words = {w.lower() for w in _SIG_WORD_RE.findall(m.group(1))}
+    p_words = [w.lower() for w in _SIG_WORD_RE.findall(paragraph)]
+    extra = [w for w in p_words if w not in source_words]
+    return len(extra) <= 6
+
 _PROMPT = """Ти — редактор популярного українського Telegram-каналу новин (стиль на кшталт
 «Україна Сейчас»: живо, коротко, по-людськи, але БЕЗ вигадок і паніки).
 
@@ -64,6 +85,10 @@ _PROMPT = """Ти — редактор популярного українськ
 - АТРИБУЦІЯ: якщо з матеріалів видно, ХТО повідомив (Генштаб, ОВА, конкретне ЗМІ,
   посадовець) — додай у кінець headline через кому-тире: «..., — Генштаб» (це
   ЗАВЖДИ йде ПІСЛЯ завершеної думки, а не замінює кінець речення). Це додає ваги.
+  Якщо атрибуцію вже додано в headline — НЕ повторюй її окремим реченням чи
+  абзацом у paragraphs («Про це повідомляє X», «Цю інформацію повідомляє
+  видання X»). Абзац, що містить ЛИШЕ це — дублювання без нової інформації,
+  просто прибери його.
 - ДОВЖИНА ЗАЛЕЖИТЬ ВІД ВАГИ НОВИНИ: коротка заява/реакція/курйоз — paragraphs з ОДНОГО
   короткого абзацу (1–2 речення), і цього досить. Велика подія з деталями (атака,
   трагедія, важливе рішення) — 2–3 абзаци. Не роздувай дрібниці.
@@ -551,6 +576,8 @@ def _gemini_generate(
         paragraphs = [str(p).strip() for p in data.get("paragraphs", []) if str(p).strip()]
         if len(paragraphs) == 1 and _is_redundant_paragraph(headline, paragraphs[0]):
             paragraphs = []
+        elif paragraphs and _is_pure_attribution_paragraph(paragraphs[-1], headline):
+            paragraphs.pop()
         body = "\n\n".join(paragraphs)
         if not headline:
             raise ValueError("порожня відповідь")
