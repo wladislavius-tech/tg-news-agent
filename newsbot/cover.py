@@ -134,11 +134,35 @@ def _value_card(draw, cx, cy, card_w, card_h, label, value, unit, arrow_ref):
         draw.text((cx + card_w - 26, cy + 84), arrow, font=_font(32), fill=a_color, anchor="rm")
 
 
+def _value_card_buysell(draw, cx, cy, card_w, card_h, label, buy, sell, arrow_ref):
+    """Картка «назва / купівля / продаж» — для валют із реальним готівковим
+    курсом (НБУ дає лише один офіційний курс, без купівлі-продажу)."""
+    _panel(draw, [cx, cy, cx + card_w, cy + card_h], fill=(18, 30, 62), outline=(64, 88, 140))
+    draw.text((cx + 28, cy + 20), label, font=_font(28), fill=(150, 168, 205))
+    if buy is None or sell is None:
+        draw.text((cx + 28, cy + 74), "—", font=_font(54), fill=(90, 105, 140))
+        return
+    row_f, tag_f, unit_f = _font(38), _font(22), _font(22)
+    for i, (tag, val) in enumerate((("КУПІВЛЯ", buy), ("ПРОДАЖ", sell))):
+        ry = cy + 60 + i * 44
+        draw.text((cx + 28, ry + 3), tag, font=tag_f, fill=(140, 158, 195))
+        val_str = f"{val:.2f}"
+        draw.text((cx + 150, ry), val_str, font=row_f, fill=(255, 255, 255))
+        w_val = draw.textlength(val_str, font=row_f)
+        draw.text((cx + 158 + w_val, ry + 12), "грн", font=unit_f, fill=(150, 168, 205))
+    cur, prev = arrow_ref
+    arrow, a_color = _arrow(cur, prev)
+    if arrow:
+        draw.text((cx + card_w - 26, cy + 84), arrow, font=_font(32), fill=a_color, anchor="rm")
+
+
 def make_morning_card(
     when: datetime,
     war_day: int,
     rates: dict[str, float],
     prev_rates: dict[str, float],
+    cash: dict[str, tuple[float, float]],
+    prev_cash: dict[str, tuple[float, float]],
     fuel: dict[str, float],
     prev_fuel: dict[str, float],
     observances: list[str],
@@ -181,19 +205,33 @@ def make_morning_card(
             _value_card(draw, cx, cy, card_w, card_h, label, value, unit, ref)
         return y0 + 2 * card_h + 18 + 32
 
-    # --- КУРС ВАЛЮТ ---
+    # --- КУРС ВАЛЮТ --- (USD/EUR — готівковий курс купівлі/продажу ПриватБанку,
+    # де є; PLN/BTC — єдиний курс НБУ/CoinGecko, бо купівлі-продажу для них
+    # нема в цьому джерелі)
     def fmt(code):
         if code not in rates:
             return (None, "")
         v = rates[code]
         return (f"${v:,.0f}".replace(",", " "), "") if code == "BTC" else (f"{v:.2f}", "грн")
-    cur_cells = [
-        ("ДОЛАР • USD", *fmt("USD"), (rates.get("USD"), prev_rates.get("USD"))),
-        ("ЄВРО • EUR", *fmt("EUR"), (rates.get("EUR"), prev_rates.get("EUR"))),
-        ("ЗЛОТИЙ • PLN", *fmt("PLN"), (rates.get("PLN"), prev_rates.get("PLN"))),
-        ("БІТКОЇН • BTC", *fmt("BTC"), (rates.get("BTC"), prev_rates.get("BTC"))),
-    ]
-    y0 = section_grid("КУРС ВАЛЮТ", "за даними НБУ", cur_cells, 250)
+
+    y0 = 250
+    draw.text((m, y0), "КУРС ВАЛЮТ", font=_font(40), fill=(255, 197, 0))
+    draw.text((Wc - m, y0 + 6), "готівка ПриватБанк / НБУ", font=_font(26),
+              fill=(150, 168, 205), anchor="ra")
+    y0 += 58
+    cur_specs = [("ДОЛАР • USD", "USD"), ("ЄВРО • EUR", "EUR"),
+                 ("ЗЛОТИЙ • PLN", "PLN"), ("БІТКОЇН • BTC", "BTC")]
+    for idx, (label, code) in enumerate(cur_specs):
+        cx = m + (idx % 2) * (card_w + 28)
+        cy = y0 + (idx // 2) * (card_h + 18)
+        if code in cash:
+            buy, sell = cash[code]
+            p_buy, p_sell = prev_cash.get(code, (None, None))
+            _value_card_buysell(draw, cx, cy, card_w, card_h, label, buy, sell, (sell, p_sell))
+        else:
+            _value_card(draw, cx, cy, card_w, card_h, label, *fmt(code),
+                        (rates.get(code), prev_rates.get(code)))
+    y0 += 2 * card_h + 18 + 32
 
     # --- ВАРТІСТЬ ПАЛЬНОГО ---
     def fuf(code):

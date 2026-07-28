@@ -16,6 +16,11 @@ log = logging.getLogger(__name__)
 _NBU_URL = "https://bank.gov.ua/NBUStatService/v1/statdirectory/exchange?json"
 _BTC_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
 _FUEL_URL = "https://index.minfin.com.ua/ua/markets/fuel/"
+# Готівковий курс (купівля/продаж) — ПриватБанк, публічне API без ключа.
+# НБУ дає лише один офіційний (облікових) курс, без купівлі/продажу — це
+# нормально для USD/EUR (реальний готівковий курс людям цікавіший), але PLN
+# і BTC там немає, тому для них лишається єдиний курс НБУ/CoinGecko.
+_PRIVAT_CASH_URL = "https://api.privatbank.ua/p24api/pubinfo?json&exchange&coursid=5"
 
 CURRENCIES = ("USD", "EUR", "PLN")
 
@@ -48,6 +53,22 @@ def fetch_rates() -> dict[str, float]:
         out["BTC"] = float(btc["bitcoin"]["usd"])
     except Exception as exc:  # noqa: BLE001
         log.warning("CoinGecko недоступний: %s", exc)
+    return out
+
+
+def fetch_cash_rates() -> dict[str, tuple[float, float]]:
+    """Готівковий курс купівлі/продажу USD, EUR. {"USD": (44.65, 45.03), ...}."""
+    out: dict[str, tuple[float, float]] = {}
+    try:
+        data = requests.get(
+            _PRIVAT_CASH_URL, headers={"User-Agent": config.USER_AGENT}, timeout=20
+        ).json()
+        for row in data:
+            code = row.get("ccy")
+            if code in ("USD", "EUR"):
+                out[code] = (round(float(row["buy"]), 2), round(float(row["sale"]), 2))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ПриватБанк (готівковий курс) недоступний: %s", exc)
     return out
 
 
