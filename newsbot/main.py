@@ -97,7 +97,15 @@ def _pick_trend_fallback(
     придатного варіанту: ні напряму (стрічка порожня), ні опосередковано (усі
     знайдені кандидати виявились семантичними дублями вже опублікованого).
     Якщо ця ж подія є на Укрнеті — повертає укрнетівський кластер (фото й
-    описи від видань-першоджерел), інакше — сам тренд для переписування AI."""
+    описи від видань-першоджерел), інакше — сам тренд для переписування AI.
+
+    Раніше тут перевірявся ЛИШЕ cluster_id — а той самий звіт (напр. щоденні
+    втрати Генштабу) репостять кілька різних TG-каналів, кожен зі своїм
+    cluster_id, тож дубль з іншого каналу проходив непоміченим (реальний
+    кейс: той самий звіт опублікували двічі поспіль). Тепер є й семантична
+    перевірка (як у консенсусу/відео-квоти), з "хвостом" учорашніх заголовків
+    (state_mod.recent_titles), щоб не губити дублі на межі доби."""
+    recent = state_mod.recent_titles(state)
     for trend in tgtrends.fetch_trends(now):
         it = tgtrends.to_feed_item(trend)
         matched = tgtrends.match_feed_item(trend.text, items)
@@ -105,6 +113,8 @@ def _pick_trend_fallback(
             matched.related_count = max(matched.related_count, it.related_count)
             it = matched
         if state_mod.is_posted(state, it.cluster_id):
+            continue
+        if recent and llm.is_same_event(it.title, [], recent):
             continue
         if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
             log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
@@ -288,7 +298,7 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     alert = tgtrends.find_urgent_alert(now)
     if not alert or state_mod.is_posted(state, alert.cluster_id):
         return False
-    recent = (state.get("daily") or {}).get("titles", [])[-20:]
+    recent = state_mod.recent_titles(state)
     if recent and llm.is_same_event(alert.title, [], recent):
         return False  # цей факт уже постили (оновлення-розвиток пройде як не-дубль)
     caption = llm.compose_alert(alert.description or alert.title)
@@ -582,7 +592,7 @@ def maybe_post_consensus(state: dict, now: datetime, dry_run: bool, items: list)
     consensus = tgtrends.find_consensus(now)
     if not consensus or state_mod.is_posted(state, consensus.cluster_id):
         return
-    recent = (state.get("daily") or {}).get("titles", [])[-20:]
+    recent = state_mod.recent_titles(state)
     if recent and llm.is_same_event(consensus.title, [], recent):
         return
     # Якщо ця ж подія вже є на Укрнеті — беремо укрнетівський кластер (фото й описи видань)
@@ -638,7 +648,7 @@ def run(dry_run: bool, force: bool) -> None:
     # відео-сюжет із великих TG-каналів першим (навіть коли Укрнет має новини).
     posts_today, vshare = state_mod.video_share_today(state, now)
     if not first_run and posts_today >= config.VIDEO_QUOTA_MIN_POSTS and vshare < config.VIDEO_TARGET_SHARE:
-        recent_titles = (state.get("daily") or {}).get("titles", [])[-20:]
+        recent_titles = state_mod.recent_titles(state)
         video_trends = tgtrends.fetch_trends(
             now, video_only=True,
             max_age_hours=config.VIDEO_TREND_MAX_AGE_HOURS,

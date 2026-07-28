@@ -58,6 +58,28 @@ def _words(title: str) -> set[str]:
     return {w.lower() for w in _WORD_RE.findall(title) if len(w) > 3}
 
 
+def recent_titles(state: dict, limit: int = 20, tail: int = 10) -> list[str]:
+    """Заголовки за сьогодні + "хвіст" останніх учорашніх (posted_titles) —
+    для семантичної перевірки (llm.is_same_event) дублів, що спливають рано
+    вранці нового дня.
+
+    Реальний кейс: state["daily"]["titles"] обнуляється щоночі (див.
+    remember_post) — тож перевірка ЛИШЕ проти нього вранці порівнює новий
+    кандидат з порожнім списком, і вчорашній дубль (напр. той самий звіт
+    Генштабу з іншого TG-каналу) проходить непоміченим. posted_titles —
+    ролінг-список, що НЕ обнуляється щоночі, тож дає "хвіст" через межу доби."""
+    daily_titles = (state.get("daily") or {}).get("titles", [])
+    tail_titles = state.get("posted_titles", [])[-tail:]
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in daily_titles + tail_titles:
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out[-limit:]
+
+
 def is_posted(state: dict, cluster_id: str) -> bool:
     """Той самий кластер (URL) уже публікувався — однозначний дубль, без
     винятків (на відміну від is_duplicate, тут нема місця для "розвитку
