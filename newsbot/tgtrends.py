@@ -56,6 +56,17 @@ _RU_MONITOR_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Щоденний зведений звіт Генштабу про бойові втрати ворога — реальний кейс:
+# той самий звіт (той самий "1590 окупантів, 8 танків") пішов у канал і
+# 27, і 28 липня, бо різні TG-канали переказують той самий звіт по-різному
+# і Jaccard/AI-дедуп не завжди ловить збіг. Тепер це окрема фіча (main.py
+# maybe_post_daily_losses, джерело — mod.gov.ua напряму, природний дедуп за
+# датою в URL), тож із генерик-конвеєра трендів такі пости просто прибираємо,
+# щоб не дублювати той самий звіт двічі різними шляхами. Стала фраза "з 24
+# лютого 2022"/"з 24.02.2022" — Генштаб завжди рахує сукупні втрати від
+# початку повномасштабної війни саме так, це надійна ознака жанру.
+_DAILY_LOSSES_RE = re.compile(r"з 24 лютого 2022|з 24\.02\.(?:20)?22", re.IGNORECASE)
+
 
 # Ключові слова, що вказують на зв'язок з Україною/війною/світовою політикою.
 # Джерела — TREND_CHANNELS — часом дають пости російською (цитати, репости),
@@ -130,7 +141,12 @@ def fetch_channel(channel: str, now: datetime, before: int = 0) -> list[TrendPos
             continue
         text_el = msg.select_one(".tgme_widget_message_text")
         text = clean_text(text_el.get_text(" ", strip=True)) if text_el else ""
-        if len(text) < config.TREND_MIN_TEXT or _AD_RE.search(text) or _looks_russian(text):
+        if (
+            len(text) < config.TREND_MIN_TEXT
+            or _AD_RE.search(text)
+            or _looks_russian(text)
+            or _DAILY_LOSSES_RE.search(text)
+        ):
             continue
         ru_source_claim = bool(_RU_MONITOR_RE.search(text))
         views_el = msg.select_one(".tgme_widget_message_views")

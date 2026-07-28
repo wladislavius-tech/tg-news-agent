@@ -17,7 +17,10 @@ from datetime import datetime, timedelta
 from itertools import zip_longest
 from zoneinfo import ZoneInfo
 
-from . import config, cover, genimage, generic_photos, llm, source_logos, state as state_mod, tg, tgtrends, ukrnet
+from . import (
+    config, cover, genimage, generic_photos, llm, modgov, source_logos,
+    state as state_mod, tg, tgtrends, ukrnet,
+)
 
 log = logging.getLogger("newsbot")
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -403,6 +406,40 @@ def maybe_post_morning(state: dict, now: datetime, dry_run: bool) -> None:
         state_mod.save(state)
 
 
+def maybe_post_daily_losses(state: dict, now: datetime, dry_run: bool) -> None:
+    """Раз на день публікує офіційний звіт МОУ (mod.gov.ua) про бойові втрати
+    ворога — з інфографікою джерела і власним описом. Без AI: цифри мають
+    бути дослівні від Генштабу, тож переписування текст не чіпає взагалі.
+
+    Дедуп природний і надійний: дата звіту в URL самого сайту МОУ, а
+    state["modgov_losses_date"] гарантує один пост на день, навіть якщо
+    TG-канали ще довго перепощують той самий звіт (реальний кейс: генерик-
+    конвеєр трендів раніше публікував один і той же звіт двічі — 27 і
+    28 липня — бо Jaccard/AI-дедуп не завжди ловить збіг між різними
+    каналами-переказами; tgtrends._DAILY_LOSSES_RE тепер додатково відсіює
+    такі пости й від генерик-конвеєра)."""
+    today = now.date().isoformat()
+    if state.get("modgov_losses_date") == today:
+        return
+    losses = modgov.fetch_daily_losses(now.date())
+    if losses is None:
+        return  # ще не опублікували сьогодні — спробуємо наступного тику
+    caption = modgov.compose_caption(losses)
+    image = modgov.download_infographic(losses.image_url)
+    if dry_run:
+        print("=" * 60)
+        print(caption)
+        print(f"[звіт МОУ про втрати: {'з фото' if image else 'без фото'}]")
+        return
+    if image:
+        tg.send_post(caption, image=image)
+    else:
+        tg.send_post(caption)
+    log.info("Звіт МОУ про втрати опубліковано ✔")
+    state["modgov_losses_date"] = today
+    state_mod.save(state)
+
+
 def maybe_post_horoscope(state: dict, now: datetime, dry_run: bool) -> None:
     """О 09:xx публікує гороскоп на день (текстовим постом)."""
     today = now.date().isoformat()
@@ -572,6 +609,7 @@ def run(dry_run: bool, force: bool) -> None:
 
     # --- Рубрики за своїм часом ---
     maybe_post_morning(state, now, dry_run)
+    maybe_post_daily_losses(state, now, dry_run)
     maybe_post_horoscope(state, now, dry_run)
     maybe_post_digest(state, now, dry_run)
 
