@@ -18,6 +18,7 @@ def load() -> dict:
         state = {}
     state.setdefault("posted_ids", [])
     state.setdefault("posted_titles", [])
+    state.setdefault("posted_facts", [])
     state.setdefault("last_post_at", None)
     state.setdefault("last_regular_post_at", None)
     state.setdefault("daily", {"date": "", "titles": [], "message_ids": [], "facts": [], "videos": 0})
@@ -77,6 +78,30 @@ def recent_titles(state: dict, limit: int = 20, tail: int = 10) -> list[str]:
     out: list[str] = []
     for t in daily_titles + tail_titles:
         if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out[-limit:]
+
+
+def recent_facts(state: dict, limit: int = 20, tail: int = 10) -> list[str]:
+    """Тексти постів (без HTML/футера, див. main._plain_fact) за сьогодні +
+    "хвіст" учорашніх — та сама логіка, що recent_titles(), але для ТІЛА
+    поста, а не заголовка.
+
+    Реальний кейс (01.08.2026): два пости про потоплення контейнеровоза
+    Yanina мали ОДНАКОВЕ тіло тексту (той самий опис із джерела), але РІЗНІ
+    заголовки — item.title кластера Укрнету змінився між двома запусками
+    (кластер "мутує"), а AI був недоступний (429), тож спрацював резервний
+    формат "заголовок + опис джерела". Перевірка ЛИШЕ заголовків
+    (recent_titles/is_near_exact_duplicate) цього не ловить, бо заголовки
+    справді різні — а тіло документа те саме."""
+    daily_facts = (state.get("daily") or {}).get("facts", [])
+    tail_facts = state.get("posted_facts", [])[-tail:]
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in daily_facts + tail_facts:
+        if not t or t in seen:
             continue
         seen.add(t)
         out.append(t)
@@ -169,6 +194,9 @@ def remember_post(
 ) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
+    if fact:
+        state["posted_facts"].append(fact)
+        state["posted_facts"] = state["posted_facts"][-config.MAX_REMEMBERED_TITLES:]
     state["last_post_at"] = now.isoformat()
     if is_regular:
         # Окремий таймер звичайних новин — не зсувається алертами/консенсусом

@@ -600,6 +600,18 @@ def _plain_fact(caption: str) -> str:
     return html.unescape(text).strip()
 
 
+def _fact_body(fact: str) -> str:
+    """Лише тіло факту, без заголовка (перший "\n\n"-блок _plain_fact).
+
+    Реальний кейс: два пости про контейнеровоз Yanina мали ОДНАКОВЕ тіло
+    (той самий опис джерела), але РІЗНІ заголовки (item.title кластера
+    Укрнету змінився між запусками) — порівняння повного _plain_fact
+    (заголовок+тіло) розбавляло Жаккар нижче порогу, бо різні слова
+    заголовка "топили" збіг слів тіла. Тіло — надійніший сигнал дублю."""
+    _, _, body = fact.partition("\n\n")
+    return body or fact
+
+
 _ALBUM_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
 
 
@@ -657,6 +669,23 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
             state_mod.save(state)
         return False
 
+    # Перевірка дублів за ТІЛОМ поста (не лише заголовком): реальний кейс —
+    # два пости про потоплення контейнеровоза Yanina мали ОДНАКОВЕ тіло
+    # тексту (той самий опис джерела), але РІЗНІ заголовки, бо item.title
+    # кластера Укрнету змінився між запусками (кластер "мутує"), а AI був
+    # недоступний — спрацював резервний формат "заголовок + опис джерела".
+    # Перевірка лише заголовків цього не ловить, тіло — надійніший сигнал.
+    fact = _plain_fact(caption)
+    recent_facts = state_mod.recent_facts(state)
+    recent_bodies = [_fact_body(f) for f in recent_facts]
+    if recent_bodies and state_mod.is_near_exact_duplicate(_fact_body(fact), recent_bodies):
+        log.info("Текстовий дубль (те саме тіло поста) — пропускаю: %r", item.title)
+        state["posted_ids"].append(item.cluster_id)
+        state["posted_titles"].append(item.title)
+        if not dry_run:
+            state_mod.save(state)
+        return False
+
     message_id = None
     if dry_run:
         print("=" * 60)
@@ -682,7 +711,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
         image_url=img_url, is_video=is_video, is_regular=is_regular,
-        is_viral=item.is_viral, message_id=message_id, fact=_plain_fact(caption),
+        is_viral=item.is_viral, message_id=message_id, fact=fact,
     )
     if not dry_run:
         state_mod.save(state)
