@@ -179,18 +179,31 @@ def build_post(
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
         # шукаємо фото цієї ж події в інших каналах, потім узагальнене фото;
         # якщо й цього немає — шаблонна обкладинка (без AI-ілюстрації).
+        img_reasons: list[str] = []
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
+            if not item.image_url:
+                img_reasons.append("власного фото немає (тренд без картинки)")
+            else:
+                img_reasons.append("власне фото не завантажилось або не пройшло перевірку якості")
             alt_image_url, _alt_video_url = tgtrends.find_matching_media(
                 item.description or item.title, now, exclude_channel=channel,
                 max_age_hours=config.RETRO_MEDIA_MAX_AGE_HOURS,
             )
             if alt_image_url:
                 image = ukrnet.download_image(alt_image_url)
+                if not image:
+                    img_reasons.append("канали-конкуренти: знайдене фото не завантажилось/не пройшло перевірку")
+            else:
+                img_reasons.append("канали-конкуренти: тієї самої події з фото не знайдено")
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
         generic_chosen = None
         used_fallback_asset = image is None
         if image is None:
+            log.info(
+                "Фото не знайдено для тренду %r: %s",
+                item.title, "; ".join(img_reasons) or "причина невідома",
+            )
             # Лише тема новини (title), НЕ повний опис — прохідна згадка
             # персони десь у тілі тексту (напр. "бізнесмени, близькі до
             # путіна" у новині геть про інше) не має тригерити її фото.
@@ -198,6 +211,11 @@ def build_post(
             image, generic_chosen = generic_photos.pick(item.title, now, last_generic_photos)
             if image is None:
                 image = source_logos.pick(llm.attributed_source(caption))
+            log.info(
+                "Фолбек: %s",
+                f"генерик-фото {generic_chosen[0]}" if generic_chosen
+                else ("лого видання-джерела" if image else "не спрацював — публікую текстом"),
+            )
         if image:
             media = {"image": image}
             if generic_chosen:
@@ -238,25 +256,41 @@ def build_post(
     images: list[bytes] = []
     first_image_url = ""  # для колажу вечірнього дайджесту
     seen_hashes: set[str] = set()
+    # Діагностика "чому без фото" — реальний кейс: пост вийшов текстом, і без
+    # цього довелось вручну копирсатись у логах GitHub Actions, щоб зрозуміти
+    # причину (кластер тоді мав мало джерел, жодне без фото). Пишемо лише
+    # ОДИН підсумковий INFO-рядок, коли фото так і не знайшлось (крок 5) —
+    # не захаращуємо лог кожною окремою спробою для звичайних успішних постів.
+    img_reasons: list[str] = []
     for i in range(min(len(sources), tries)):
         # sources[0] задає тему підпису (meta = src_meta(0)) — інші джерела
         # кластера перевіряємо на спорідненість, щоб не тягнути в альбом
         # фото геть іншого інциденту того самого дня.
         if i > 0 and not _topically_related(sources[0].title, sources[i].title):
+            img_reasons.append(f"{sources[i].domain}: тема не споріднена з головним джерелом")
             continue
         m = src_meta(i)
-        img = ukrnet.download_image(m.image_url)
-        if img:
-            digest = hashlib.md5(img).hexdigest()
-            if digest not in seen_hashes:
-                seen_hashes.add(digest)
-                images.append(img)
-                if not first_image_url:
-                    first_image_url = m.image_url
+        if not m.image_url:
+            img_reasons.append(f"{sources[i].domain}: немає фото в матеріалі (og:image)")
+        else:
+            img = ukrnet.download_image(m.image_url)
+            if img:
+                digest = hashlib.md5(img).hexdigest()
+                if digest not in seen_hashes:
+                    seen_hashes.add(digest)
+                    images.append(img)
+                    if not first_image_url:
+                        first_image_url = m.image_url
+                else:
+                    img_reasons.append(f"{sources[i].domain}: те саме фото вже додано з іншого джерела")
+            else:
+                img_reasons.append(f"{sources[i].domain}: фото не завантажилось або не пройшло перевірку якості")
         if images and not want_album:
             break
         if len(images) >= config.ALBUM_MAX_PHOTOS:
             break
+    if not sources:
+        img_reasons.append("Укрнет не дав жодного джерела для цього кластера")
 
     # 3) Власних фото немає — шукаємо цю ж подію в каналах-конкурентах
     if not images:
@@ -268,6 +302,10 @@ def build_post(
             if img:
                 images = [img]
                 first_image_url = alt_image_url
+            else:
+                img_reasons.append("канали-конкуренти: знайдене фото не завантажилось/не пройшло перевірку")
+        else:
+            img_reasons.append("канали-конкуренти: тієї самої події з фото не знайдено")
 
     # 4) Фото немає — YouTube-прев'ю як запасний варіант
     if not images:
@@ -275,6 +313,7 @@ def build_post(
         if youtube:
             caption = llm.compose_post(item, sources, meta, youtube_url=youtube, **src_kwargs)
             return caption, {"youtube_url": youtube}
+        img_reasons.append("YouTube: немає вбудованого відео в жодному джерелі")
 
     caption = llm.compose_post(item, sources, meta, **src_kwargs)
 
@@ -285,6 +324,10 @@ def build_post(
     generic_chosen = None
     used_fallback_asset = not images
     if not images:
+        log.info(
+            "Фото не знайдено серед %d джерел для %r: %s",
+            len(sources), item.title, "; ".join(img_reasons) or "причина невідома",
+        )
         # Лише тема новини (title), НЕ повний опис — прохідна згадка персони
         # десь у тілі статті не має тригерити її фото (новина може бути геть
         # про інше й лише побіжно згадувати цю людину).
@@ -293,6 +336,12 @@ def build_post(
             generic = source_logos.pick(llm.attributed_source(caption))
         if generic:
             images = [generic]
+            log.info(
+                "Фолбек: %s",
+                f"генерик-фото {generic_chosen[0]}" if generic_chosen else "лого видання-джерела",
+            )
+        else:
+            log.info("Фолбек не спрацював (немає ні відомої персони, ні відомого видання) — публікую текстом")
 
     if len(images) > 1:
         media = {"album": images, "_img_url": first_image_url}
