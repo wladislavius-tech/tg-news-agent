@@ -65,7 +65,13 @@ def fetch_posts() -> list[dict]:
             img_m = _BG_IMAGE_RE.search(photo_el["style"])
             if img_m:
                 image = img_m.group(1)
-        posts.append({"id": int(m.group(1)), "text": text, "image": image})
+        # Відео поста — теж публічний прямий URL (cdn*.telesco.pe?token=...),
+        # Threads сам його завантажить за VIDEO. Пост має або фото, або відео.
+        video = None
+        video_el = msg.select_one("video.tgme_widget_message_video")
+        if video_el and video_el.get("src"):
+            video = video_el["src"]
+        posts.append({"id": int(m.group(1)), "text": text, "image": image, "video": video})
     return posts
 
 
@@ -281,16 +287,17 @@ def threads_token(state: dict) -> str | None:
     return token
 
 
-def _publish(token: str, **fields) -> str | None:
-    """Створити контейнер і опублікувати. Повертає id опублікованого поста або None."""
+def _publish(token: str, retries: int = 5, delay: int = 5, **fields) -> str | None:
+    """Створити контейнер і опублікувати. Повертає id опублікованого поста або None.
+    Відео обробляється довше за фото — виклик з відео передає більший retries/delay."""
     r = requests.post(f"{THREADS_API}/me/threads",
                       data={"access_token": token, **fields}, timeout=30)
     if r.status_code != 200 or "id" not in r.json():
         print(f"[!] Threads create: {r.status_code} {r.text[:200]}")
         return None
     creation_id = r.json()["id"]
-    for _ in range(5):
-        time.sleep(5)
+    for _ in range(retries):
+        time.sleep(delay)
         r2 = requests.post(f"{THREADS_API}/me/threads_publish",
                            data={"creation_id": creation_id, "access_token": token}, timeout=30)
         if r2.status_code == 200:
@@ -302,17 +309,22 @@ def _publish(token: str, **fields) -> str | None:
     return None
 
 
-def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | None = None) -> bool:
+def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | None = None,
+                  video_url: str | None = None) -> bool:
     """Головний пост — БЕЗ зовнішнього посилання (лінк у тексті вбиває охоплення).
     Посилання на канал додаємо окремою відповіддю-коментарем.
-    Якщо в оригінальному пості є фото — постимо як IMAGE (фото стабільно
-    підвищує залучення в стрічці Threads); якщо публікація з фото не
-    вдалась (Threads не зміг завантажити картинку) — фолбек на TEXT."""
+    Якщо в оригінальному пості є відео/фото — постимо як VIDEO/IMAGE (медіа
+    стабільно підвищує залучення в стрічці Threads); якщо публікація з медіа
+    не вдалась — фолбек на TEXT."""
     try:
         tags = f"{TAGS} {extra_tag}" if extra_tag else TAGS
         caption = f"{body}{tags}"[:500]
         post_id = None
-        if image_url:
+        if video_url:
+            # відео обробляється довше за фото — 12 спроб по 8с (~96с) замість 25с
+            post_id = _publish(token, retries=12, delay=8,
+                               media_type="VIDEO", video_url=video_url, text=caption)
+        elif image_url:
             post_id = _publish(token, media_type="IMAGE", image_url=image_url, text=caption)
         if not post_id:
             post_id = _publish(token, media_type="TEXT", text=caption)
@@ -335,6 +347,7 @@ PENDING_STALE_HOURS = 4  # якщо пара не зібралась так до
 
 def _hold(p: dict) -> dict:
     return {"id": p["id"], "text": p["text"], "image": p.get("image"),
+            "video": p.get("video"),
             "seen_at": dt.datetime.now().isoformat(timespec="seconds")}
 
 
@@ -391,8 +404,8 @@ def main() -> None:
         extra_tag = "#контрудар" if is_strike_news(winner["text"]) else ""
         print(f"Пара {pending['id']}/{p['id']}{' [прострочено]' if stale else ''} → "
               f"пост {winner['id']}: {body[:60]}...{' [ударна тема]' if extra_tag else ''}"
-              f"{' [фото]' if winner.get('image') else ''}")
-        if post_threads(token, body, extra_tag, winner.get("image")):
+              f"{' [відео]' if winner.get('video') else ' [фото]' if winner.get('image') else ''}")
+        if post_threads(token, body, extra_tag, winner.get("image"), winner.get("video")):
             print("  Threads: опубліковано")
             posted += 1
             state["last_posted_id"] = p["id"]
