@@ -170,7 +170,7 @@ def fetch_article_meta(article_url: str) -> ArticleMeta:
     for value, key in _OG_RE_REV.findall(html):
         found.setdefault(key.lower().split(":")[0], value)
     meta.image_url = found.get("image", "")
-    meta.description = _unescape(found.get("description", ""))
+    meta.description = _trim_truncated_description(_unescape(found.get("description", "")))
     meta.site_name = _unescape(found.get("site_name", ""))
 
     video = found.get("video", "")
@@ -215,6 +215,27 @@ def _extract_body_excerpt(html: str, limit: int = 900) -> str:
 def _unescape(text: str) -> str:
     import html as html_mod
     return html_mod.unescape(text).strip()
+
+
+_TRAILING_ELLIPSIS_RE = re.compile(r"\s*(?:\.{2,}|…)\s*$")
+_SENTENCE_END_RE = re.compile(r'[.!?]["\'»)]?(?=\s|$)')
+
+
+def _trim_truncated_description(text: str) -> str:
+    """og:description джерела нерідко сама обрізана CMS сайту-джерела серед
+    речення (закінчується "..."/"…") — реальний кейс: fallback-пост без AI
+    скопіював її дослівно, вийшло "...внаслідок обстрілу в ніч на …" —
+    обірване речення в опублікованому пості. Прибираємо обрізок і лишаємо
+    лише завершені речення; якщо жодного повного речення не залишається —
+    весь опис був одним недописаним реченням, краще порожній body, ніж
+    видимий читачеві обрив."""
+    trimmed = _TRAILING_ELLIPSIS_RE.sub("", text)
+    if trimmed == text:
+        return text  # немає ознак обрізання джерелом
+    ends = list(_SENTENCE_END_RE.finditer(trimmed))
+    if not ends:
+        return ""
+    return trimmed[: ends[-1].end()].strip()
 
 
 _PLACEHOLDER_URL_RE = re.compile(
