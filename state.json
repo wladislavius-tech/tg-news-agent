@@ -612,11 +612,7 @@
   }
  },
  "last_regular_post_at": "2026-08-01T05:00:54.982511+03:00",
- "active_alert": {
-  "message_id": 1525,
-  "posted_at": "2026-08-01T01:35:26.589281+03:00",
-  "caption": "<b><tg-emoji emoji-id=\"5415701443812303271\">🚀</tg-emoji> ❗️ Повітряна тривога</b>\n\n📌 <a href=\"https://t.me/News_Ukraine_world_war\">Українські новини — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-07-31",
  "cash_rates": {
   "date": "2026-07-31",
