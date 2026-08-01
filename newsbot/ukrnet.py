@@ -45,6 +45,19 @@ class ArticleMeta:
     source_titles: list[str] = field(default_factory=list)
 
 
+def _fix_encoding(resp: requests.Response) -> None:
+    """requests довіряє лише charset, явно вказаному в заголовку Content-Type
+    сайту — якщо його нема (типово для деяких сайтів-першоджерел), він тихо
+    вважає кодування ISO-8859-1 (RFC 2616 default), хоча реальний текст —
+    UTF-8. Це ламає кирилицю в мохибейк ("Ð£ Ð»Ð¸Ð¿Ð½Ñ" замість "У липні") —
+    реальний кейс: тіло поста (meta.description із fetch_article_meta)
+    вийшло в такому вигляді, бо джерело не вказало charset. Довіряємо
+    заголовку лише коли він явний; інакше — визначення requests за байтами
+    (apparent_encoding), яке коректно відрізняє utf-8 від windows-1251."""
+    if "charset" not in resp.headers.get("Content-Type", "").lower():
+        resp.encoding = resp.apparent_encoding
+
+
 def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
     """GET із запасним ходом: сайти (зокрема Укрнет) блокують IP дата-центрів,
     тому при 403/429 HTML-сторінки перечитуємо через шлюз r.jina.ai."""
@@ -56,6 +69,7 @@ def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
             allow_redirects=True,
         )
         resp.raise_for_status()
+        _fix_encoding(resp)
         return resp
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else 0
@@ -67,6 +81,7 @@ def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
         timeout=90,
     )
     resp.raise_for_status()
+    _fix_encoding(resp)
     return resp
 
 
