@@ -213,8 +213,21 @@ def _extract_body_excerpt(html: str, limit: int = 900) -> str:
 
 
 def _unescape(text: str) -> str:
+    """Деякі джерела (особливо через проксі r.jina.ai) віддають og:description
+    з КІЛЬКОМА рівнями HTML-екранування (напр. "&amp;amp;#039;" замість "'") —
+    реальний кейс: одинарний html.unescape() знімав лише один рівень, і в
+    опублікованому пості лишався видимий сміттєвий "&amp;#039;" замість
+    апострофа. Знімаємо рівні по колу, доки рядок не перестане змінюватись
+    (ліміт ітерацій — бо чисто теоретично можна вигадати текст, що виглядає
+    як entity і після unescape, хоч на практиці далі 2-3 рівнів не буває)."""
     import html as html_mod
-    return html_mod.unescape(text).strip()
+    prev = text
+    for _ in range(5):
+        cur = html_mod.unescape(prev)
+        if cur == prev:
+            break
+        prev = cur
+    return prev.strip()
 
 
 _TRAILING_ELLIPSIS_RE = re.compile(r"\s*(?:\.{2,}|…)\s*$")
