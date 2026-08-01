@@ -19,6 +19,18 @@ log = logging.getLogger(__name__)
 
 _SIG_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
 
+# Резервний заголовок (AI недоступний, headline = item.title дослівно) не
+# знає, яке медіа реально додається до НАШОГО поста — а заголовок кластера
+# Укрнету часто містить власну позначку сайту-першоджерела на кшталт
+# "(ВІДЕО)", яка стосується ЙОГО сторінки, а не нашого поста (реальний
+# кейс: заголовок з "(ВІДЕО)" опублікували з фото, без жодного відео).
+# Прибираємо завжди — навіть коли відео справді додано, Telegram і так
+# показує його вкладеним, текстова позначка зайва.
+_MEDIA_MARKER_RE = re.compile(
+    r"\s*[\(\[]\s*(?:ВІДЕО|VIDEO|ФОТО(?:\s*/\s*ВІДЕО)?|ВІДЕО\s*/\s*ФОТО|ФОТОРЕПОРТАЖ)\s*[\)\]]\s*$",
+    re.IGNORECASE,
+)
+
 
 def _is_redundant_paragraph(headline: str, paragraph: str) -> bool:
     """Чи єдиний абзац тіла просто переказує headline іншими словами, без
@@ -179,12 +191,16 @@ def compose_post(
     generated = _gemini_generate(item, sources, meta, prior_context) if has_ai else None
     if generated:
         headline, body = generated
+        # Резервні провайдери (і зрідка сама модель) інколи тягнуть у
+        # заголовок позначку сайту-першоджерела на кшталт "(ВІДЕО)" з
+        # матеріалів — вона стосується ЙОГО сторінки, не нашого поста.
+        headline = _MEDIA_MARKER_RE.sub("", headline)
     else:
         if require_ai:
             # Тренди з TG-каналів без AI-переписування не публікуємо:
             # дослівна копія чужого поста — плагіат і ризик скарг
             raise RuntimeError("AI недоступний, тренд пропущено (без переписування не постимо)")
-        headline = "📰 " + item.title
+        headline = "📰 " + _MEDIA_MARKER_RE.sub("", item.title)
         body = meta.description
 
     body_html = _md_bold_to_html(body) if body else ""
