@@ -217,10 +217,15 @@ def ai_pick_more_important(text_a: str, text_b: str) -> str:
     лише коли попередній без квоти чи впав. Фолбек на "a" (хронологічно
     перша), якщо жоден не відповів."""
     prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
-    data = _gemini_compare(prompt) or _groq_compare(prompt) or _github_models_compare(prompt)
-    if not data:
-        return "a"
-    return "b" if data.get("winner") == "b" else "a"
+    for name, fn in (("Gemini", _gemini_compare), ("Groq", _groq_compare),
+                     ("GitHub Models", _github_models_compare)):
+        data = fn(prompt)
+        if data:
+            winner = "b" if data.get("winner") == "b" else "a"
+            print(f"  [AI-порівняння: {name} відповів, переможець {winner}]")
+            return winner
+    print("  [AI-порівняння: усі провайдери недоступні, фолбек на хронологічно першу]")
+    return "a"
 
 
 def pick_winner(pending: dict, candidate: dict) -> dict:
