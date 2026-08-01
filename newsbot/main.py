@@ -807,14 +807,19 @@ def run(dry_run: bool, force: bool) -> None:
     if limit > 1 and not first_run:
         # Кожен додатковий пост має бути гарячим І не дублем уже обраних (велика
         # подія часто дає кілька кластерів про той самий факт — постимо лише один).
+        # Кандидати за межами топ-2 (candidates[2:]) НЕ проходили classify_relation
+        # вище (він рахує лише перші 2, щоб не сипати зайвими викликами AI) — тож
+        # звіряємо їх і проти вже опублікованого сьогодні/вчора (recent), а не
+        # лише проти вибраного в цьому самому циклі (chosen_titles).
+        recent_titles_only = [t for t, _ in recent]
         for cand in candidates[1:5]:
             if len(chosen) >= limit:
                 break
             if cand.related_count < config.SECOND_POST_THRESHOLD:
                 break  # кандидати відсортовані за related — далі лише менші
-            chosen_titles = [c.title for c in chosen]
-            if state_mod.is_near_exact_duplicate(cand.title, chosen_titles) or llm.is_same_event(cand.title, [], chosen_titles):
-                log.info("Додатковий пост — дубль уже обраного, пропускаю: %r", cand.title)
+            against = [c.title for c in chosen] + recent_titles_only
+            if state_mod.is_near_exact_duplicate(cand.title, against) or (against and llm.is_same_event(cand.title, [], against)):
+                log.info("Додатковий пост — дубль уже опублікованого, пропускаю: %r", cand.title)
                 continue
             chosen.append(cand)
     if first_run:
@@ -836,12 +841,19 @@ def run(dry_run: bool, force: bool) -> None:
         if _publish_item(state, item, now, dry_run, is_regular=True, prior_context=ctx):
             continue
         # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
-        # беремо звичайну новину Укрнету, яка може вийти й без AI
+        # беремо звичайну новину Укрнету, яка може вийти й без AI. Цей кандидат
+        # міг узагалі не пройти classify_relation (лише топ-2 туди потрапляють) —
+        # тож звіряємо і його проти вже опублікованого (recent).
         fallback = next(
             (c for c in candidates
              if not c.cluster_id.startswith("tg:") and c not in chosen),
             None,
         )
+        if fallback and recent:
+            recent_titles_only = [t for t, _ in recent]
+            if state_mod.is_near_exact_duplicate(fallback.title, recent_titles_only) or llm.is_same_event(fallback.title, [], recent_titles_only):
+                log.info("Відкат на новину Укрнету — теж дубль, пропускаю: %r", fallback.title)
+                fallback = None
         if fallback:
             log.info("Відкат на новину Укрнету: %r", fallback.title)
             fb_ctx = prior_context_by_id.get(fallback.cluster_id, "")
