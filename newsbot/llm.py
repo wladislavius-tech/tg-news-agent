@@ -202,6 +202,12 @@ def compose_post(
             raise RuntimeError("AI недоступний, тренд пропущено (без переписування не постимо)")
         headline = "📰 " + _MEDIA_MARKER_RE.sub("", item.title)
         body = meta.description
+        # Без AI body — це дослівний og:description джерела: для коротких
+        # новин він часто просто переказує заголовок (реальний кейс: пост
+        # про рекордні втрати рф за липень мав тіло, що на 75% з тих самих
+        # значущих слів, що й заголовок, — читач бачив факт двічі).
+        if body and _is_redundant_paragraph(headline, body):
+            body = ""
 
     body_html = _md_bold_to_html(body) if body else ""
     source_text = f"{item.title} {item.description or ''}"
