@@ -1,6 +1,7 @@
 """Стан агента: що вже запощено і коли був останній пост."""
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -27,6 +28,8 @@ def load() -> dict:
     state.setdefault("rates", {"date": "", "values": {}})
     state.setdefault("fuel", {"date": "", "values": {}})
     state.setdefault("active_alert", None)
+    state.setdefault("generic_photo_last", {})
+    state.setdefault("recent_image_hashes", [])
     return state
 
 
@@ -78,6 +81,54 @@ def recent_titles(state: dict, limit: int = 20, tail: int = 10) -> list[str]:
         seen.add(t)
         out.append(t)
     return out[-limit:]
+
+
+def is_duplicate_image(state: dict, image_bytes: bytes) -> bool:
+    """Те саме РЕАЛЬНЕ фото вже було в одному з нещодавніх постів — сильний,
+    незалежний від AI сигнал дублю.
+
+    Реальний кейс (01.08.2026): та сама подія (замах на командира "Хартії",
+    відмова Трампа передати Patriot, атака на НПЗ рф тощо) публікувалась по
+    кілька разів — щоразу з ПЕРЕПИСАНИМ по-іншому заголовком (текстовий
+    Jaccard/AI-дедуп це не завжди ловить), але з тим самим фото з
+    першоджерела. generic/logo-фото (main.py: media["_local_asset"]) сюди
+    НЕ потрапляють — вони легітимно повторюються завжди."""
+    h = hashlib.md5(image_bytes).hexdigest()
+    return h in state.get("recent_image_hashes", [])
+
+
+def remember_image_hash(state: dict, image_bytes: bytes) -> None:
+    h = hashlib.md5(image_bytes).hexdigest()
+    hashes = state.setdefault("recent_image_hashes", [])
+    hashes.append(h)
+    state["recent_image_hashes"] = hashes[-config.MAX_REMEMBERED_IMAGE_HASHES:]
+
+
+def is_near_exact_duplicate(title: str, recent: list[str], threshold: float = 0.9) -> bool:
+    """Дешева перевірка БЕЗ AI: чи заголовок майже дослівно збігається з
+    одним із нещодавніх (Жаккар >= threshold).
+
+    Реальний кейс (30.07.2026): коли Gemini/Groq одночасно віддавали 429
+    (квота), llm.classify_relation/is_same_event не спрацьовували і за
+    задумом за замовчуванням вважали "не дублікат" ("краще рідкісний дубль,
+    ніж пропущена новина") — той самий текст ("Росія масовано атакувала
+    Україну 70 ракетами...") опублікувався поспіль 3 рази за 1.5 години.
+    Поріг НАБАГАТО вищий за TITLE_SIMILARITY (0.55, м'який сигнал для
+    AI-контексту в is_duplicate) — тут ловимо лише практично ідентичний
+    повтор, щоб не блокувати легітимний розвиток події зі схожим заголовком.
+    Викликати ПЕРЕД llm.is_same_event/classify_relation (коротке замикання
+    `or` економить виклик AI, і працює навіть коли AI взагалі недоступний)."""
+    new_words = _words(title)
+    if not new_words:
+        return False
+    for old in recent:
+        old_words = _words(old)
+        if not old_words:
+            continue
+        jaccard = len(new_words & old_words) / len(new_words | old_words)
+        if jaccard >= threshold:
+            return True
+    return False
 
 
 def is_posted(state: dict, cluster_id: str) -> bool:

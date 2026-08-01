@@ -114,7 +114,7 @@ def _pick_trend_fallback(
             it = matched
         if state_mod.is_posted(state, it.cluster_id):
             continue
-        if recent and llm.is_same_event(it.title, [], recent):
+        if recent and (state_mod.is_near_exact_duplicate(it.title, recent) or llm.is_same_event(it.title, [], recent)):
             continue
         if it.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
             log.info("Вірусна квота дня вичерпана, пропускаю офтоп-тренд: %r", it.title)
@@ -124,7 +124,8 @@ def _pick_trend_fallback(
 
 
 def build_post(
-    item: ukrnet.FeedItem, now: datetime, prior_context: str = ""
+    item: ukrnet.FeedItem, now: datetime, prior_context: str = "",
+    last_generic_photos: dict[str, str] | None = None,
 ) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
@@ -137,7 +138,11 @@ def build_post(
     prior_context — якщо ця новина є розвитком уже опублікованої сьогодні
     події (див. llm.classify_relation), сюди приходить текст того поста, щоб
     об'єднати старе й нове в один цілісний пост.
-    """
+
+    last_generic_photos — останнє використане фото на людину (person_key ->
+    filename), щоб generic_photos.pick ротував і не повторював той самий
+    портрет поспіль (media["_generic_photo"] у відповіді несе новий вибір,
+    щоб виклик оновив це в state)."""
     src_kwargs: dict = {}
     if prior_context:
         src_kwargs["prior_context"] = prior_context
@@ -183,16 +188,25 @@ def build_post(
             if alt_image_url:
                 image = ukrnet.download_image(alt_image_url)
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
+        generic_chosen = None
+        used_fallback_asset = image is None
         if image is None:
             # Лише тема новини (title), НЕ повний опис — прохідна згадка
             # персони десь у тілі тексту (напр. "бізнесмени, близькі до
             # путіна" у новині геть про інше) не має тригерити її фото.
             # Лого видання-джерела — за РЕАЛЬНОЮ атрибуцією вже готового caption.
-            image = generic_photos.pick(item.title, now) or source_logos.pick(
-                llm.attributed_source(caption)
-            )
+            image, generic_chosen = generic_photos.pick(item.title, now, last_generic_photos)
+            if image is None:
+                image = source_logos.pick(llm.attributed_source(caption))
         if image:
-            return caption, {"image": image}
+            media = {"image": image}
+            if generic_chosen:
+                media["_generic_photo"] = generic_chosen
+            if used_fallback_asset:
+                # generic/logo-фото легітимно повторюються — перевірка дублів
+                # фото (_publish_item) не має їх чіпати.
+                media["_local_asset"] = True
+            return caption, media
         # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
         # повторює текстом той самий заголовок (не несе інформації).
         return caption, {}
@@ -268,20 +282,32 @@ def build_post(
     # (президент, ТЦК, BBC/Reuters тощо) — caption уже готовий, бо логотип
     # видання шукаємо за РЕАЛЬНОЮ атрибуцією поста, а не здогадом із сирих
     # матеріалів (яких могло бути кілька, а AI обрала одне головне).
+    generic_chosen = None
+    used_fallback_asset = not images
     if not images:
         # Лише тема новини (title), НЕ повний опис — прохідна згадка персони
         # десь у тілі статті не має тригерити її фото (новина може бути геть
         # про інше й лише побіжно згадувати цю людину).
-        generic = generic_photos.pick(item.title, now) or source_logos.pick(
-            llm.attributed_source(caption)
-        )
+        generic, generic_chosen = generic_photos.pick(item.title, now, last_generic_photos)
+        if generic is None:
+            generic = source_logos.pick(llm.attributed_source(caption))
         if generic:
             images = [generic]
 
     if len(images) > 1:
-        return caption, {"album": images, "_img_url": first_image_url}
+        media = {"album": images, "_img_url": first_image_url}
+        if generic_chosen:
+            media["_generic_photo"] = generic_chosen
+        return caption, media
     if images:
-        return caption, {"image": images[0], "_img_url": first_image_url}
+        media = {"image": images[0], "_img_url": first_image_url}
+        if generic_chosen:
+            media["_generic_photo"] = generic_chosen
+        if used_fallback_asset:
+            # generic/logo-фото легітимно повторюються — перевірка дублів
+            # фото (_publish_item) не має їх чіпати.
+            media["_local_asset"] = True
+        return caption, media
     # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
     # повторює текстом той самий заголовок (не несе інформації).
     return caption, {}
@@ -299,7 +325,7 @@ def maybe_post_urgent_alert(state: dict, now: datetime, dry_run: bool) -> bool:
     if not alert or state_mod.is_posted(state, alert.cluster_id):
         return False
     recent = state_mod.recent_titles(state)
-    if recent and llm.is_same_event(alert.title, [], recent):
+    if recent and (state_mod.is_near_exact_duplicate(alert.title, recent) or llm.is_same_event(alert.title, [], recent)):
         return False  # цей факт уже постили (оновлення-розвиток пройде як не-дубль)
     caption = llm.compose_alert(alert.description or alert.title)
     if dry_run:
@@ -551,11 +577,37 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     is_regular=True оновлює таймер звичайних новин; термінові пости — False.
     prior_context — текст попереднього поста, якщо це його розвиток (об'єднати в один)."""
     try:
-        caption, media = build_post(item, now, prior_context)
+        caption, media = build_post(
+            item, now, prior_context, last_generic_photos=state.get("generic_photo_last", {}),
+        )
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
     img_url = media.pop("_img_url", "")
+    generic_photo = media.pop("_generic_photo", None)
+    is_local_asset = media.pop("_local_asset", False)
+    if generic_photo:
+        person_key, filename = generic_photo
+        state.setdefault("generic_photo_last", {})[person_key] = filename
+
+    # Перевірка дублів за фото (не для generic/logo — ті легітимно
+    # повторюються): та сама подія під переписаним заголовком, але з тим
+    # самим фото першоджерела — надійніший сигнал, ніж текстовий Jaccard,
+    # особливо коли AI недоступний (класифікація дублів тоді не працює).
+    real_image = None
+    if not is_local_asset:
+        if "image" in media:
+            real_image = media["image"]
+        elif media.get("album"):
+            real_image = media["album"][0]
+    if real_image and state_mod.is_duplicate_image(state, real_image):
+        log.info("Фотодубль (те саме фото вже публікувалось) — пропускаю: %r", item.title)
+        state["posted_ids"].append(item.cluster_id)
+        state["posted_titles"].append(item.title)
+        if not dry_run:
+            state_mod.save(state)
+        return False
+
     message_id = None
     if dry_run:
         print("=" * 60)
@@ -575,6 +627,8 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     else:
         message_id = tg.send_post(caption, **media)
         log.info("Опубліковано ✔: %r", item.title)
+    if real_image:
+        state_mod.remember_image_hash(state, real_image)
     is_video = "video" in media or "video_album" in media
     state_mod.remember_post(
         state, item.cluster_id, item.title, now,
@@ -593,7 +647,7 @@ def maybe_post_consensus(state: dict, now: datetime, dry_run: bool, items: list)
     if not consensus or state_mod.is_posted(state, consensus.cluster_id):
         return
     recent = state_mod.recent_titles(state)
-    if recent and llm.is_same_event(consensus.title, [], recent):
+    if recent and (state_mod.is_near_exact_duplicate(consensus.title, recent) or llm.is_same_event(consensus.title, [], recent)):
         return
     # Якщо ця ж подія вже є на Укрнеті — беремо укрнетівський кластер (фото й описи видань)
     matched = tgtrends.match_feed_item(consensus.description or consensus.title, items)
@@ -658,7 +712,7 @@ def run(dry_run: bool, force: bool) -> None:
             vit = tgtrends.to_feed_item(trend)
             if state_mod.is_posted(state, vit.cluster_id):
                 continue
-            if recent_titles and llm.is_same_event(vit.title, [], recent_titles):
+            if recent_titles and (state_mod.is_near_exact_duplicate(vit.title, recent_titles) or llm.is_same_event(vit.title, [], recent_titles)):
                 continue
             if vit.is_viral and state_mod.viral_count_today(state, now) >= config.VIRAL_QUOTA_MAX:
                 continue
@@ -694,7 +748,12 @@ def run(dry_run: bool, force: bool) -> None:
                 alt_titles = [s.title for s in ukrnet.fetch_cluster_sources(cand.url)]
             except Exception:  # noqa: BLE001
                 pass
-        relation, fact = llm.classify_relation(cand.title, alt_titles, recent)
+        if recent and state_mod.is_near_exact_duplicate(cand.title, [t for t, _ in recent]):
+            # Практично дослівний повтор — не варто чекати на AI (і працює,
+            # навіть коли AI взагалі недоступний, див. is_near_exact_duplicate).
+            relation, fact = "duplicate", ""
+        else:
+            relation, fact = llm.classify_relation(cand.title, alt_titles, recent)
         if relation == "duplicate":
             log.info("Семантичний дубль, пропускаю назавжди: %r", cand.title)
             state["posted_ids"].append(cand.cluster_id)
@@ -713,7 +772,10 @@ def run(dry_run: bool, force: bool) -> None:
         # коли інші великі канали вже щось запостили).
         fallback = _pick_trend_fallback(state, now, items)
         if fallback and recent:
-            relation, fact = llm.classify_relation(fallback.title, [], recent)
+            if state_mod.is_near_exact_duplicate(fallback.title, [t for t, _ in recent]):
+                relation, fact = "duplicate", ""
+            else:
+                relation, fact = llm.classify_relation(fallback.title, [], recent)
             if relation == "duplicate":
                 log.info("Тренд із Telegram теж дубль, пропускаю: %r", fallback.title)
                 fallback = None
@@ -750,7 +812,8 @@ def run(dry_run: bool, force: bool) -> None:
                 break
             if cand.related_count < config.SECOND_POST_THRESHOLD:
                 break  # кандидати відсортовані за related — далі лише менші
-            if llm.is_same_event(cand.title, [], [c.title for c in chosen]):
+            chosen_titles = [c.title for c in chosen]
+            if state_mod.is_near_exact_duplicate(cand.title, chosen_titles) or llm.is_same_event(cand.title, [], chosen_titles):
                 log.info("Додатковий пост — дубль уже обраного, пропускаю: %r", cand.title)
                 continue
             chosen.append(cand)

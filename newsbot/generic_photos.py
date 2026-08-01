@@ -4,40 +4,82 @@
 персону чи установу, а власного й конкурентського фото не знайшлось — краще
 впізнаване узагальнене зображення, ніж AI-малюнок. Джерела й ліцензії фото —
 newsbot/assets/generic/ATTRIBUTION.md.
+
+Реальний кейс: один і той самий портрет Зеленського/Трампа з'являвся під
+поспіль різними новинами — включно з новинами-ПОДІЯМИ ("прибув до США",
+"зустрінуться о 16:30"), де портрет-цитата взагалі не пасує (це не пряма мова
+людини, а подія за її участі). Тепер: (1) такі новини-події генерик-фото не
+отримують взагалі — краще реальне фото з конкурентів/Укрнету (шукається до
+цього кроку) або текстовий пост; (2) для новин-цитат, де портрет доречний,
+ротуємо серед кількох фото персони, а не повторюємо один і той же файл.
 """
 from __future__ import annotations
 
+import random
 import re
 from datetime import datetime
 from pathlib import Path
 
 _ASSETS = Path(__file__).resolve().parent / "assets" / "generic"
 
-_ZELENSKY_RE = re.compile(r"зеленськ", re.IGNORECASE)
-_PUTIN_RE = re.compile(r"путін", re.IGNORECASE)
-_RESHETYLOVA_RE = re.compile(r"решетилов", re.IGNORECASE)
-_TRUMP_RE = re.compile(r"трамп", re.IGNORECASE)
+_PEOPLE = [
+    (re.compile(r"зеленськ", re.IGNORECASE), "zelensky"),
+    (re.compile(r"путін", re.IGNORECASE), "putin"),
+    (re.compile(r"решетилов", re.IGNORECASE), "reshetylova"),
+    (re.compile(r"трамп", re.IGNORECASE), "trump"),
+]
 _TCK_RE = re.compile(r"\bтцк\b|територіальн\w*\s+центр\w*\s+комплектуванн", re.IGNORECASE)
 
+# Новини-ПОДІЇ (прибуття, поїздки, заплановані зустрічі) — портрет-цитата тут
+# вводить в оману: це не пряма мова людини, а подія за її участі. Список не
+# претендує на повноту (евристика на дієсловах), але покриває найчастіші
+# випадки з реальних постів каналу.
+_EVENT_VERB_RE = re.compile(
+    r"прибу(в|ла|ли|де)|вилет(ів|іла|іли|ає)|приїха(в|ла|ли)|прилет(ів|іла|іли)|"
+    r"вируши(в|ла|ли)|вирушає|вилітає|"
+    r"відвідає|відвідав|відвідала|відвідали|"
+    r"зустрі(неться|нуться|вся|лися)|"
+    r"розпочав? візит|розпочала візит|завершив? візит|завершила візит",
+    re.IGNORECASE,
+)
 
-def pick_photo(text: str) -> bytes | None:
-    """Фото відомої персони за файлом з assets/generic/, або None.
 
-    Перевіряється ПЕРЕД картками установ (pick()) — новина-цитата конкретної
-    людини (напр. омбудсменки) має пріоритет над узагальненою карткою
-    установи, навіть якщо в тексті також згадується ця установа.
-    """
-    if _ZELENSKY_RE.search(text):
-        path = _ASSETS / "zelensky.jpg"
-    elif _PUTIN_RE.search(text):
-        path = _ASSETS / "putin.jpg"
-    elif _RESHETYLOVA_RE.search(text):
-        path = _ASSETS / "reshetylova.jpg"
-    elif _TRUMP_RE.search(text):
-        path = _ASSETS / "trump.jpg"
-    else:
-        return None
-    return path.read_bytes() if path.exists() else None
+def _photo_files(person: str) -> list[Path]:
+    """Усі доступні фото персони: {person}.jpg, {person}_2.jpg, {person}_3.jpg..."""
+    files = []
+    base = _ASSETS / f"{person}.jpg"
+    if base.exists():
+        files.append(base)
+    i = 2
+    while True:
+        p = _ASSETS / f"{person}_{i}.jpg"
+        if not p.exists():
+            break
+        files.append(p)
+        i += 1
+    return files
+
+
+def pick_photo(
+    text: str, last_used: dict[str, str] | None = None
+) -> tuple[bytes | None, tuple[str, str] | None]:
+    """Фото відомої персони — ЛИШЕ для новин-цитат/заяв (не для новин-подій,
+    де портрет не відповідає суті, див. _EVENT_VERB_RE). Ротує серед кількох
+    фото персони, уникаючи повторення останнього використаного.
+
+    Повертає (bytes, (person_key, filename)) або (None, None) — другий
+    елемент потрібен виклику, щоб запам'ятати вибір у state для ротації
+    наступного разу (main.py)."""
+    person = next((key for pattern, key in _PEOPLE if pattern.search(text)), None)
+    if person is None or _EVENT_VERB_RE.search(text):
+        return None, None
+    files = _photo_files(person)
+    if not files:
+        return None, None
+    last = (last_used or {}).get(person)
+    candidates = [f for f in files if f.name != last] or files
+    chosen = random.choice(candidates)
+    return chosen.read_bytes(), (person, chosen.name)
 
 
 def pick_institution_card(text: str, now: datetime) -> bytes | None:
@@ -49,6 +91,13 @@ def pick_institution_card(text: str, now: datetime) -> bytes | None:
     return None
 
 
-def pick(text: str, now: datetime) -> bytes | None:
-    """Фото персони, або картка установи, або None — у цьому пріоритеті."""
-    return pick_photo(text) or pick_institution_card(text, now)
+def pick(
+    text: str, now: datetime, last_used: dict[str, str] | None = None
+) -> tuple[bytes | None, tuple[str, str] | None]:
+    """Фото персони (з ротацією), або картка установи, або (None, None) —
+    у цьому пріоритеті. Другий елемент пари — інфо для ротації (person_key,
+    filename), заповнений лише коли повернуто фото персони."""
+    photo, chosen = pick_photo(text, last_used)
+    if photo:
+        return photo, chosen
+    return pick_institution_card(text, now), None
