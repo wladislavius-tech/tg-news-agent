@@ -767,11 +767,7 @@
   }
  },
  "last_regular_post_at": "2026-08-01T14:50:32.745400+03:00",
- "active_alert": {
-  "message_id": 1559,
-  "posted_at": "2026-08-01T11:20:32.918457+03:00",
-  "caption": "<b>❗️ Повітряна тривога</b>\n\n📌 <a href=\"https://t.me/News_Ukraine_world_war\">Українські новини — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-08-01",
  "cash_rates": {
   "date": "2026-08-01",
