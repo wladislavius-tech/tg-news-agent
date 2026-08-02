@@ -115,7 +115,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHANNEL: News_Ukraine_world_war
+          CHANNEL: Suputnyk_news
           MAX_PER_RUN: "3"
           SEED_LAST_ID: "207"
         run: python crosspost.py
