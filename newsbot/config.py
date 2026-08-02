@@ -48,6 +48,16 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
 CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
 CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+# ВІДОМА ОБМЕЖЕНІСТЬ: Workers AI має default max_tokens=256, і компат-шар,
+# схоже, ігнорує наше явне max_tokens=4000 — короткі JSON (перевірка
+# дублів) проходять, повний пост (заголовок+абзаци) обривається на
+# середині. Лишили свідомо (User: "лишити як є") — каскад безпечно падає
+# далі, шкоди нема, а для коротких перевірок все ж корисний.
+#
+# xAI Grok розглядали як п'ятий провайдер (обіцяли $175/міс безкоштовних
+# кредитів через opt-in "data sharing"), але на практиці для нашого
+# акаунта такого варіанту в консолі не знайшлось — лише платний
+# Pay-as-you-go з карткою. Не додавали.
 # OpenRouter — без картки, але скромний ліміт (50 запитів/добу, 20/хв),
 # лишається додатковим шансом після Cloudflare. МОДЕЛЬ РОТУЄТЬСЯ: список
 # безкоштовних (":free") моделей на openrouter.ai змінюється щотижня —
