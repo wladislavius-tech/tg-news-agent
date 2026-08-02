@@ -46,6 +46,9 @@ CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b")
 # brownout виявиться тимчасовим, а не остаточним згортанням сервісу.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
 GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
+# Той самий довгоживучий токен, що продовжує crosspost.py — тільки для читання
+# (stats.py викликає лише *_insights, нічого не публікує й не продовжує сам).
+THREADS_TOKEN = os.environ.get("THREADS_TOKEN", "")
 
 # Чи доступний хоч один AI-провайдер (для генерації текстів)
 AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or CEREBRAS_API_KEY or GITHUB_TOKEN)
@@ -175,6 +178,10 @@ CONSENSUS_AGE_MIN = 20      # вікно синхронності, хвилин
 # Обов'язково й невідкладно, без жодних лімітів на кількість постів (лише не дубль).
 KYIV_ALERT_AGE_MIN = 30     # свіжість поста-алерту, хвилин
 ALERT_ALLCLEAR_MAX_AGE_MIN = 240  # доки чекаємо "відбій" для дописування в той самий пост
+
+# --- Статистика (newsbot/stats.py) ---
+STATS_STATE_FILE = ROOT / "stats_state.json"
+STATS_REPORT_HOUR = 21  # київська година надсилання щоденного зведення
 
 # --- Стан ---
 STATE_FILE = ROOT / "state.json"
