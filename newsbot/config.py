@@ -135,8 +135,10 @@ POSTS_GAP_MINUTES = (2, 4)
 # усередині запуску при частому crontab ризикує утворити чергу запусків.
 JITTER_MAX_SECONDS = 2 * 60
 
-# Підпис каналу в кінці поста
-CHANNEL_NAME = "Українські новини"
+# Підпис каналу в кінці поста. Username (@News_Ukraine_world_war) не
+# змінювався — ребрендинг 2026-08-02 торкнувся лише видимої назви/бренду
+# каналу (тепер "Suputnyk_news"), тому CHANNEL_LINK лишається тим самим.
+CHANNEL_NAME = "Suputnyk_news"
 CHANNEL_LINK = "https://t.me/News_Ukraine_world_war"
 
 # Вечірній дайджест "Головне за день"
