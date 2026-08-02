@@ -137,6 +137,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 _GEMINI_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
@@ -175,6 +178,19 @@ def _gemini_compare(prompt: str) -> dict | None:
     return None
 
 
+def _lenient_json(text: str) -> dict:
+    """Парсить JSON навіть якщо провайдер обгорнув його в markdown чи текст
+    навколо (деякі OpenAI-сумісні провайдери не завжди чисто дотримуються
+    response_format: json_object) — той самий патерн, що в newsbot/llm.py."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise exc
+        return json.loads(text[start : end + 1])
+
+
 def _groq_compare(prompt: str) -> dict | None:
     if not GROQ_API_KEY:
         return None
@@ -197,6 +213,28 @@ def _groq_compare(prompt: str) -> dict | None:
         return None
 
 
+def _cloudflare_compare(prompt: str) -> dict | None:
+    if not CLOUDFLARE_API_TOKEN or not CLOUDFLARE_ACCOUNT_ID:
+        return None
+    try:
+        r = requests.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"},
+            json={
+                "model": CLOUDFLARE_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2, "max_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return _lenient_json(r.json()["choices"][0]["message"]["content"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[!] Cloudflare compare: {e}")
+        return None
+
+
 def _openrouter_compare(prompt: str) -> dict | None:
     if not OPENROUTER_API_KEY:
         return None
@@ -213,7 +251,7 @@ def _openrouter_compare(prompt: str) -> dict | None:
             timeout=30,
         )
         r.raise_for_status()
-        return json.loads(r.json()["choices"][0]["message"]["content"])
+        return _lenient_json(r.json()["choices"][0]["message"]["content"])
     except Exception as e:  # noqa: BLE001
         print(f"[!] OpenRouter compare: {e}")
         return None
@@ -243,11 +281,12 @@ def _github_models_compare(prompt: str) -> dict | None:
 
 def ai_pick_more_important(text_a: str, text_b: str) -> str:
     """"a" чи "b" — яка новина важливіша для суспільства. Каскад провайдерів
-    (як newsbot/llm.py): Gemini → Groq → OpenRouter → GitHub Models — наступний
-    вмикається, лише коли попередній без квоти чи впав. Фолбек на "a"
-    (хронологічно перша), якщо жоден не відповів."""
+    (як newsbot/llm.py): Gemini → Groq → Cloudflare → OpenRouter → GitHub
+    Models — наступний вмикається, лише коли попередній без квоти чи впав.
+    Фолбек на "a" (хронологічно перша), якщо жоден не відповів."""
     prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
     for name, fn in (("Gemini", _gemini_compare), ("Groq", _groq_compare),
+                     ("Cloudflare", _cloudflare_compare),
                      ("OpenRouter", _openrouter_compare), ("GitHub Models", _github_models_compare)):
         data = fn(prompt)
         if data:

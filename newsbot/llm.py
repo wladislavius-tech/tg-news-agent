@@ -492,6 +492,21 @@ def compose_digest(titles: list[str], message_ids: list[int | None], now_str: st
     return f"<b>🌙 Головне за {now_str}</b>\n\n{body}\n\n{footer}"
 
 
+def _lenient_json(text: str) -> dict:
+    """Парсить JSON з відповіді провайдера, навіть якщо той обгорнув його в
+    markdown-код-блок (```json ... ```) чи додав текст навколо — деякі
+    OpenAI-сумісні провайдери (напр. Cloudflare Workers AI) не завжди чисто
+    дотримуються response_format: json_object, а прямий json.loads() на
+    такому тексті падає з винятком, хоча валідний JSON усередині є."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise exc
+        return json.loads(text[start : end + 1])
+
+
 def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
     """JSON-запит до Groq (OpenAI-сумісний API) — другий безкоштовний провайдер."""
     if not config.GROQ_API_KEY:
@@ -516,8 +531,40 @@ def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
         return None
 
 
+def _cloudflare_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до Cloudflare Workers AI (OpenAI-сумісний) — третій
+    безкоштовний провайдер. Найщедріший з реально безкоштовних (без картки)
+    варіантів, які знайшли: 10 000 "нейронів"/добу (≈1300 відповідей LLM),
+    forever-free план, дозволений для production. На відміну від Groq/Gemini
+    JSON-режим у їхніх моделей задокументований непослідовно, тож парсимо
+    лениво (_lenient_json) — на випадок, якщо модель обгорне відповідь у
+    markdown чи додасть текст навколо JSON."""
+    if not config.CLOUDFLARE_API_TOKEN or not config.CLOUDFLARE_ACCOUNT_ID:
+        return None
+    try:
+        resp = requests.post(
+            f"https://api.cloudflare.com/client/v4/accounts/{config.CLOUDFLARE_ACCOUNT_ID}"
+            "/ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.CLOUDFLARE_API_TOKEN}"},
+            json={
+                "model": config.CLOUDFLARE_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_tokens": 4000,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return _lenient_json(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Cloudflare %s: %s", config.CLOUDFLARE_MODEL, exc)
+        return None
+
+
 def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит до OpenRouter (OpenAI-сумісний) — третій безкоштовний провайдер.
+    """JSON-запит до OpenRouter (OpenAI-сумісний) — четвертий безкоштовний
+    провайдер (скромний ліміт 20 запитів/хв, лишається як додатковий шанс).
 
     Використовує безкоштовну (":free") модель — Cerebras пробували першим,
     але його "безкоштовний" тариф насправді вимагає картку, тому замінили.
@@ -538,7 +585,7 @@ def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
             timeout=60,
         )
         resp.raise_for_status()
-        return json.loads(resp.json()["choices"][0]["message"]["content"])
+        return _lenient_json(resp.json()["choices"][0]["message"]["content"])
     except Exception as exc:  # noqa: BLE001
         log.warning("OpenRouter %s: %s", config.OPENROUTER_MODEL, exc)
         return None
@@ -569,8 +616,8 @@ def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
 
 
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → OpenRouter →
-    GitHub Models.
+    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → Cloudflare →
+    OpenRouter → GitHub Models.
 
     Кожен наступний вмикається, лише коли попередній без квоти чи впав.
     """
@@ -594,6 +641,7 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 continue
     return (
         _groq_json(prompt, temperature)
+        or _cloudflare_json(prompt, temperature)
         or _openrouter_json(prompt, temperature)
         or _github_models_json(prompt, temperature)
     )
