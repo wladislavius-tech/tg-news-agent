@@ -4,12 +4,14 @@
 Запускається разом з основним постингом (кожні 30 хв, окремий крок у
 post-news.yml): щоразу забирає нові reaction-/member-події Bot API
 (без втрат — офсет getUpdates зберігається в stats_state.json), а після
-config.STATS_REPORT_HOUR (за Києвом) раз на добу формує розгорнуте зведення
-й шле його власнику в TELEGRAM_ADMIN_CHAT: топ-пости з повним текстом і
-посиланням, ER% (реакції/лайки відносно переглядів), який НАПРЯМОК контенту
-заходить найкраще сьогодні й за останні 14 днів, тренд приросту підписників
-за 7 днів. Після відправки добові лічильники обнуляються, а компактний
-підсумок дня лягає в history (до 90 днів) — це і є база для трендів.
+config.STATS_REPORT_HOUR (за Києвом) раз на добу формує коротке зведення
+й шле його власнику в TELEGRAM_ADMIN_CHAT: по ОДНОМУ найпопулярнішому посту
+на платформу (повний текст, посилання, ER%), тренд приросту підписників за
+7 днів, приріст Threads-followers день-до-дня — і AI-аналіз (той самий
+каскад провайдерів, що пише пости): що з напрямків контенту заходить
+найкраще за всю накопичену історію, що змінити, що додати. Після відправки
+добові лічильники обнуляються, а компактний підсумок дня лягає в history
+(до 90 днів) — це і є база для трендів/аналізу.
 
 Bot API НЕ дає індивідуальних підписників і джерел приєднання (звідки саме
 прийшла людина — пошук/посилання/інший канал): це є лише в нативній
@@ -29,7 +31,7 @@ from zoneinfo import ZoneInfo
 import requests
 from bs4 import BeautifulSoup
 
-from . import config
+from . import config, llm
 
 KYIV = ZoneInfo("Europe/Kyiv")
 TG_API = f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}"
@@ -285,21 +287,6 @@ def aggregate_by_category(posts: list[dict], engagement_key: str) -> dict:
     return agg
 
 
-def _fmt_category_ranking(agg: dict, min_posts: int = 1) -> list[str]:
-    rows = []
-    for cat, a in agg.items():
-        if a["posts"] < min_posts:
-            continue
-        er = (a["engagement"] / a["views"] * 100) if a["views"] else 0.0
-        rows.append((er, cat, a))
-    rows.sort(key=lambda row: -row[0])
-    return [
-        f"  {CATEGORY_LABELS.get(cat, cat)}: {a['posts']} пост(ів), "
-        f"ER {er:.1f}% ({a['engagement']}/{a['views']})"
-        for er, cat, a in rows
-    ]
-
-
 def _trailing_avg(history: list[dict], n: int, key: str) -> float | None:
     recent = [h.get(key) for h in history[-n:] if h.get(key) is not None]
     return sum(recent) / len(recent) if recent else None
@@ -316,6 +303,50 @@ def _category_trend(history: list[dict], n: int, field: str) -> dict:
     return totals
 
 
+_ANALYSIS_PROMPT = """Ти — редактор-аналітик українського новинного Telegram-каналу і Threads-акаунта \
+(тема: війна, Україна, світові події). Ось агрегована статистика за останні {days} днів (JSON).
+
+Категорії контенту: strike=контрудари по РФ, casualty=обстріли/жертви, scandal=скандали/корупція, \
+world=світова політика, economy=економіка, other=інше. engagement=реакції(TG)/лайки(Threads), \
+ER=engagement/views (у відсотках рахуй сам, якщо потрібно).
+
+{summary}
+
+Дай КОРОТКИЙ (3-5 речень) конкретний висновок українською:
+1) який напрямок контенту явно заходить найкраще (за ER) і чому варто робити його більше;
+2) що варто зменшити чи змінити у форматі/темах (слабкий ER або спад);
+3) одна конкретна пропозиція, що додати нового.
+Без води і загальних фраз на кшталт "продовжуйте в тому ж дусі" — тільки конкретика на цифрах з даних.
+
+Відповідай строго JSON: {{"analysis": "текст"}}"""
+
+
+def generate_analysis(history: list[dict]) -> str:
+    """AI-думка редактора на основі ВСІХ попередніх днів (history, без сьогодні):
+    що заходить, що змінити, що додати. Той самий каскад провайдерів, що пише
+    пости (newsbot/llm.py) — жодних нових ключів."""
+    if len(history) < 2:
+        return "Ще замало даних для аналізу — з'явиться через кілька днів накопичення статистики."
+    recent = history[-14:]
+    summary = {
+        "tg_net_приріст_по_днях": [h.get("tg_net") for h in recent],
+        "tg_за_категоріями": _category_trend(recent, len(recent), "tg_by_category"),
+        "threads_followers_на_початку": recent[0].get("threads_followers"),
+        "threads_followers_зараз": recent[-1].get("threads_followers"),
+        "threads_за_категоріями": _category_trend(recent, len(recent), "threads_by_category"),
+    }
+    prompt = _ANALYSIS_PROMPT.format(
+        days=len(recent), summary=json.dumps(summary, ensure_ascii=False)
+    )
+    try:
+        data = llm._gemini_json(prompt, temperature=0.5)
+        if data and data.get("analysis"):
+            return str(data["analysis"]).strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[!] generate_analysis: {e}")
+    return "Аналіз тимчасово недоступний (AI-провайдери не відповіли)."
+
+
 def build_report(d: dict, own_posts: list[dict], threads: dict, subs: int | None, now: dt.datetime) -> str:
     for p in own_posts:
         r = d["tg_reactions"].get(str(p["id"]), {})
@@ -323,49 +354,32 @@ def build_report(d: dict, own_posts: list[dict], threads: dict, subs: int | None
         p["top_emoji"] = r.get("top_emoji") or "👍"
 
     history = d.get("history", [])
-    lines = [f"📊 Розгорнута статистика — {now.strftime('%d.%m.%Y')}", ""]
+    lines = [f"📊 Статистика — {now.strftime('%d.%m.%Y')}", ""]
 
     # ================= TELEGRAM =================
-    lines.append("📣 TELEGRAM-КАНАЛ")
+    lines.append("📣 TELEGRAM")
     if subs is not None:
-        lines.append(f"Підписників зараз: {subs}")
+        lines.append(f"Підписників: {subs}")
     net = d["tg_joined"] - d["tg_left"]
-    lines.append(f"Сьогодні: +{d['tg_joined']} приєдналось / -{d['tg_left']} відписалось (нетто {net:+d})")
+    lines.append(f"Сьогодні: +{d['tg_joined']}/-{d['tg_left']} (нетто {net:+d})")
     avg7 = _trailing_avg(history, 7, "tg_net")
     if avg7 is not None:
-        lines.append(f"Середній нетто-приріст за 7 днів: {avg7:+.1f}/день")
-
+        lines.append(f"Середній нетто за 7 днів: {avg7:+.1f}/день")
     tg_views_total = sum(p["views"] for p in own_posts)
     tg_reactions_total = sum(p["reactions"] for p in own_posts)
-    lines.append(f"Постів сьогодні: {len(own_posts)} · перегляди: {tg_views_total} · реакції: {tg_reactions_total}")
+    lines.append(f"Постів: {len(own_posts)} · перегляди: {tg_views_total} · реакції: {tg_reactions_total}")
 
-    ranked = sorted(own_posts, key=lambda p: (-p["reactions"], -p["views"]))
-    if ranked:
+    best_tg = max(own_posts, key=lambda p: (p["reactions"], p["views"]), default=None)
+    if best_tg:
+        er = (best_tg["reactions"] / best_tg["views"] * 100) if best_tg["views"] else 0.0
+        cat = CATEGORY_LABELS.get(best_tg["category"], best_tg["category"])
         lines.append("")
-        lines.append("🏆 Топ постів дня:")
-        for p in ranked[:5]:
-            er = (p["reactions"] / p["views"] * 100) if p["views"] else 0.0
-            cat = CATEGORY_LABELS.get(p["category"], p["category"])
-            lines.append(
-                f"  {p['time']} [{cat}] {p['reactions']}{p['top_emoji']} · "
-                f"{p['views']} перегл. · ER {er:.1f}%\n"
-                f"  «{p['title']}»\n  {p['url']}"
-            )
+        lines.append(
+            f"🏆 Найпопулярніший: {best_tg['time']} [{cat}] {best_tg['reactions']}{best_tg['top_emoji']} · "
+            f"{best_tg['views']} перегл. · ER {er:.1f}%\n«{best_tg['title']}»\n{best_tg['url']}"
+        )
     else:
-        lines.append("")
         lines.append("Постів сьогодні ще не було.")
-
-    cat_today = _fmt_category_ranking(aggregate_by_category(own_posts, "reactions"))
-    if cat_today:
-        lines.append("")
-        lines.append("📊 Що заходить сьогодні (за ER):")
-        lines.extend(cat_today)
-
-    cat_14d = _fmt_category_ranking(_category_trend(history, 14, "tg_by_category"), min_posts=2)
-    if cat_14d:
-        lines.append("")
-        lines.append("📈 Що заходить за останні 14 днів:")
-        lines.extend(cat_14d[:3])
 
     # ================= THREADS =================
     lines.append("")
@@ -375,39 +389,29 @@ def build_report(d: dict, own_posts: list[dict], threads: dict, subs: int | None
         prev_followers = history[-1].get("threads_followers") if history else None
         if prev_followers is not None:
             lines.append(f"Приріст з учора: {threads['followers'] - prev_followers:+d}")
-    lines.append(f"Перегляди профілю: {threads.get('views_today', 0)} · Лайки: {threads.get('likes_today', 0)}")
+    lines.append(f"Перегляди: {threads.get('views_today', 0)} · Лайки: {threads.get('likes_today', 0)}")
 
     posts = threads.get("posts") or []
-    ranked_th = sorted(posts, key=lambda p: -(p.get("likes") or 0))
-    if ranked_th:
+    best_th = max(posts, key=lambda p: p.get("likes") or 0, default=None)
+    if best_th:
+        views = best_th.get("views") or 0
+        er = (best_th.get("likes", 0) / views * 100) if views else 0.0
+        cat = CATEGORY_LABELS.get(best_th.get("category", "other"), "інше")
+        row = (
+            f"🏆 Найпопулярніший: {best_th['time']} [{cat}] {best_th.get('likes', 0)}❤️ · "
+            f"{views} перегл. · {best_th.get('replies', 0)} відп. · ER {er:.1f}%\n«{best_th['title']}»"
+        )
+        if best_th.get("url"):
+            row += f"\n{best_th['url']}"
         lines.append("")
-        lines.append("🏆 Топ постів дня:")
-        for p in ranked_th[:5]:
-            views = p.get("views") or 0
-            er = (p.get("likes", 0) / views * 100) if views else 0.0
-            cat = CATEGORY_LABELS.get(p.get("category", "other"), "інше")
-            row = (
-                f"  {p['time']} [{cat}] {p.get('likes', 0)}❤️ · {views} перегл. · "
-                f"{p.get('replies', 0)} відп. · ER {er:.1f}%\n  «{p['title']}»"
-            )
-            if p.get("url"):
-                row += f"\n  {p['url']}"
-            lines.append(row)
+        lines.append(row)
     else:
-        lines.append("")
         lines.append("Постів сьогодні ще не було.")
 
-    th_cat_today = _fmt_category_ranking(aggregate_by_category(posts, "likes"))
-    if th_cat_today:
-        lines.append("")
-        lines.append("📊 Що заходить сьогодні (за ER):")
-        lines.extend(th_cat_today)
-
-    th_cat_14d = _fmt_category_ranking(_category_trend(history, 14, "threads_by_category"), min_posts=2)
-    if th_cat_14d:
-        lines.append("")
-        lines.append("📈 Що заходить за останні 14 днів:")
-        lines.extend(th_cat_14d[:3])
+    # ================= AI-АНАЛІЗ =================
+    lines.append("")
+    lines.append("🤖 Аналіз і рекомендації:")
+    lines.append(generate_analysis(history))
 
     return "\n".join(lines)
 
