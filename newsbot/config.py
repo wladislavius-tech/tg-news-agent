@@ -43,9 +43,14 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 # безкоштовних (":free") моделей на openrouter.ai змінюється щотижня —
 # якщо OPENROUTER_MODEL за замовчуванням почне повертати 404/зникне зі
 # списку, звірити актуальну назву на https://openrouter.ai/models?max_price=0
-# і перевизначити змінною середовища/секретом OPENROUTER_MODEL.
+# і перевизначити змінною середовища/секретом OPENROUTER_MODEL. ВАЖЛИВО: не
+# кожна ":free" модель підтримує response_format json_object (наш
+# обов'язковий контракт) — реальний кейс: перший обраний варіант
+# (inclusionai/ling-3.0-flash) повертав 400 Bad Request саме через це.
+# Перевіряти supported_parameters моделі на openrouter.ai/api/v1/models
+# перед заміною.
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash:free")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
 # Четвертий AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
 # GITHUB_TOKEN (потрібен permissions: models: read у workflow), без окремого ключа.
 # Лишений останнім у каскаді (не видалений) — на випадок, якщо retirement
