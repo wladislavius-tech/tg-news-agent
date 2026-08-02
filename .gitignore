@@ -12,3 +12,6 @@ tiktok_demo_video.mp4
 
 tiktok/output/
 tiktok/state.json
+
+# Локальний стан Instagram-кросспосту (у проді керується кешем Actions)
+instagram_crosspost_state.json

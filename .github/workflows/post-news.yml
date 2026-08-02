@@ -125,3 +125,43 @@ jobs:
         with:
           path: crosspost_state.json
           key: crosspost-state-${{ github.run_id }}
+
+  # Незалежна задача: кросспост реальних відео-постів каналу в Instagram
+  # Reels (лише пости з відео — Instagram не приймає текст/фото-пости).
+  # Її збій НЕ впливає на публікацію в канал і на Threads (без needs,
+  # continue-on-error, окремий кеш стану).
+  instagram:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests beautifulsoup4 Pillow
+      - name: Перевірити наявність ffmpeg
+        run: which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Відновити стан Instagram-кросспосту
+        uses: actions/cache/restore@v4
+        with:
+          path: instagram_crosspost_state.json
+          key: instagram-crosspost-state-${{ github.run_id }}
+          restore-keys: |
+            instagram-crosspost-state-
+      - name: Кросспост відео в Instagram
+        env:
+          INSTAGRAM_TOKEN: ${{ secrets.INSTAGRAM_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: News_Ukraine_world_war
+          WATERMARK_LABEL: Suputnyk_news
+          MAX_PER_RUN: "2"
+        run: python instagram_crosspost.py
+      - name: Зберегти стан Instagram-кросспосту
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: instagram_crosspost_state.json
+          key: instagram-crosspost-state-${{ github.run_id }}
