@@ -155,7 +155,7 @@ jobs:
           INSTAGRAM_TOKEN: ${{ secrets.INSTAGRAM_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CHANNEL: News_Ukraine_world_war
+          CHANNEL: Suputnyk_news
           WATERMARK_LABEL: Suputnyk_news
           MAX_PER_RUN: "2"
         run: python instagram_crosspost.py

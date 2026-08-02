@@ -37,7 +37,7 @@ STATE_FILE = BASE / "instagram_crosspost_state.json"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 INSTAGRAM_API = "https://graph.instagram.com"
 
-CHANNEL = os.environ.get("CHANNEL", "News_Ukraine_world_war")  # технічний @username, для скрейпінгу/URL
+CHANNEL = os.environ.get("CHANNEL", "Suputnyk_news")  # технічний @username, для скрейпінгу/URL
 CHANNEL_URL = f"https://t.me/{CHANNEL}"
 WATERMARK_LABEL = os.environ.get("WATERMARK_LABEL", "Suputnyk_news")  # публічна назва каналу для водяного знаку
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "3"))
