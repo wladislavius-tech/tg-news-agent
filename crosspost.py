@@ -25,7 +25,7 @@ STATE_FILE = BASE / "crosspost_state.json"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 THREADS_API = "https://graph.threads.net/v1.0"
 
-CHANNEL = os.environ.get("CHANNEL", "News_Ukraine_world_war")
+CHANNEL = os.environ.get("CHANNEL", "Suputnyk_news")
 CHANNEL_URL = f"https://t.me/{CHANNEL}"
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "3"))
 SEED_LAST_ID = int(os.environ.get("SEED_LAST_ID", "0"))

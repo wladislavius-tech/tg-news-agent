@@ -1,4 +1,4 @@
-"""Фірмові анімовані custom-emoji каналу @News_Ukraine_world_war.
+"""Фірмові анімовані custom-emoji каналу @Suputnyk_news.
 
 Пак створено й підтримується сусіднім проєктом `..\\ТГ стікери\\` (той самий
 бот, пак newsua_emoji_by_news_ukraine_war_bot). На відміну від sendSticker

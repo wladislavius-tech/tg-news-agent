@@ -30,7 +30,7 @@ from tiktok import frame, state as state_mod, tts, video  # noqa: E402
 log = logging.getLogger("tiktok.generate")
 KYIV = ZoneInfo("Europe/Kyiv")
 
-CHANNEL = os.environ.get("CHANNEL", "News_Ukraine_world_war")
+CHANNEL = os.environ.get("CHANNEL", "Suputnyk_news")
 OUTPUT_DIR = Path(__file__).parent / "output"
 NARRATION_LIMIT = 420  # символів озвучки (~25-30с при 130-150 слів/хв)
 OUTRO = "Більше новин на каналі Українські новини в Телеграм."
