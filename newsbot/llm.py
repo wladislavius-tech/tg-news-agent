@@ -516,19 +516,23 @@ def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
         return None
 
 
-def _cerebras_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит до Cerebras (OpenAI-сумісний) — третій безкоштовний провайдер."""
-    if not config.CEREBRAS_API_KEY:
+def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до OpenRouter (OpenAI-сумісний) — третій безкоштовний провайдер.
+
+    Використовує безкоштовну (":free") модель — Cerebras пробували першим,
+    але його "безкоштовний" тариф насправді вимагає картку, тому замінили.
+    """
+    if not config.OPENROUTER_API_KEY:
         return None
     try:
         resp = requests.post(
-            "https://api.cerebras.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {config.CEREBRAS_API_KEY}"},
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"},
             json={
-                "model": config.CEREBRAS_MODEL,
+                "model": config.OPENROUTER_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
-                "max_completion_tokens": 4000,
+                "max_tokens": 4000,
                 "response_format": {"type": "json_object"},
             },
             timeout=60,
@@ -536,7 +540,7 @@ def _cerebras_json(prompt: str, temperature: float = 0.4) -> dict | None:
         resp.raise_for_status()
         return json.loads(resp.json()["choices"][0]["message"]["content"])
     except Exception as exc:  # noqa: BLE001
-        log.warning("Cerebras %s: %s", config.CEREBRAS_MODEL, exc)
+        log.warning("OpenRouter %s: %s", config.OPENROUTER_MODEL, exc)
         return None
 
 
@@ -565,7 +569,7 @@ def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
 
 
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → Cerebras →
+    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → OpenRouter →
     GitHub Models.
 
     Кожен наступний вмикається, лише коли попередній без квоти чи впав.
@@ -590,7 +594,7 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 continue
     return (
         _groq_json(prompt, temperature)
-        or _cerebras_json(prompt, temperature)
+        or _openrouter_json(prompt, temperature)
         or _github_models_json(prompt, temperature)
     )
 

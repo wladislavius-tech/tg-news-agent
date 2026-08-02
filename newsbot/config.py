@@ -33,13 +33,19 @@ GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.0-flas
 # Другий AI-провайдер (безкоштовний Groq): вмикається, коли Gemini без квоти
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-# Третій AI-провайдер (безкоштовний Cerebras): додано 2026-08-01, коли GitHub
-# Models пішов у retirement brownout (410 Gone) і весь каскад одночасно
-# впав разом з вичерпаною квотою Gemini/Groq — канал на 30+ хв лишився без
-# постів із TG-трендів (Ukrnet-фолбек без AI все ще працював). Найщедріший
-# безкоштовний тариф з відомих альтернатив (1M токенів/добу, без картки).
-CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
-CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b")
+# Третій AI-провайдер (безкоштовний OpenRouter): додано 2026-08-02, коли
+# GitHub Models пішов у retirement brownout (410 Gone) і весь каскад
+# одночасно впав разом з вичерпаною квотою Gemini/Groq — канал на 30+ хв
+# лишився без постів із TG-трендів (Ukrnet-фолбек без AI все ще працював).
+# Cerebras пробували першим, але його "безкоштовний" $5-кредит насправді
+# вимагає прив'язки картки — відмовились. OpenRouter справді без картки,
+# хоч і скромніший ліміт (50 запитів/добу). МОДЕЛЬ РОТУЄТЬСЯ: список
+# безкоштовних (":free") моделей на openrouter.ai змінюється щотижня —
+# якщо OPENROUTER_MODEL за замовчуванням почне повертати 404/зникне зі
+# списку, звірити актуальну назву на https://openrouter.ai/models?max_price=0
+# і перевизначити змінною середовища/секретом OPENROUTER_MODEL.
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "inclusionai/ling-3.0-flash:free")
 # Четвертий AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
 # GITHUB_TOKEN (потрібен permissions: models: read у workflow), без окремого ключа.
 # Лишений останнім у каскаді (не видалений) — на випадок, якщо retirement
@@ -51,7 +57,7 @@ GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
 THREADS_TOKEN = os.environ.get("THREADS_TOKEN", "")
 
 # Чи доступний хоч один AI-провайдер (для генерації текстів)
-AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or CEREBRAS_API_KEY or GITHUB_TOKEN)
+AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or OPENROUTER_API_KEY or GITHUB_TOKEN)
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"
