@@ -137,6 +137,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 _GEMINI_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
+CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
 GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
 
@@ -195,6 +197,28 @@ def _groq_compare(prompt: str) -> dict | None:
         return None
 
 
+def _cerebras_compare(prompt: str) -> dict | None:
+    if not CEREBRAS_API_KEY:
+        return None
+    try:
+        r = requests.post(
+            "https://api.cerebras.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {CEREBRAS_API_KEY}"},
+            json={
+                "model": CEREBRAS_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.2, "max_completion_tokens": 200,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        return json.loads(r.json()["choices"][0]["message"]["content"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[!] Cerebras compare: {e}")
+        return None
+
+
 def _github_models_compare(prompt: str) -> dict | None:
     if not GITHUB_TOKEN:
         return None
@@ -219,12 +243,12 @@ def _github_models_compare(prompt: str) -> dict | None:
 
 def ai_pick_more_important(text_a: str, text_b: str) -> str:
     """"a" чи "b" — яка новина важливіша для суспільства. Каскад провайдерів
-    (як newsbot/llm.py): Gemini → Groq → GitHub Models — наступний вмикається,
-    лише коли попередній без квоти чи впав. Фолбек на "a" (хронологічно
-    перша), якщо жоден не відповів."""
+    (як newsbot/llm.py): Gemini → Groq → Cerebras → GitHub Models — наступний
+    вмикається, лише коли попередній без квоти чи впав. Фолбек на "a"
+    (хронологічно перша), якщо жоден не відповів."""
     prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
     for name, fn in (("Gemini", _gemini_compare), ("Groq", _groq_compare),
-                     ("GitHub Models", _github_models_compare)):
+                     ("Cerebras", _cerebras_compare), ("GitHub Models", _github_models_compare)):
         data = fn(prompt)
         if data:
             winner = "b" if data.get("winner") == "b" else "a"

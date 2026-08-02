@@ -516,8 +516,32 @@ def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
         return None
 
 
+def _cerebras_json(prompt: str, temperature: float = 0.4) -> dict | None:
+    """JSON-запит до Cerebras (OpenAI-сумісний) — третій безкоштовний провайдер."""
+    if not config.CEREBRAS_API_KEY:
+        return None
+    try:
+        resp = requests.post(
+            "https://api.cerebras.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.CEREBRAS_API_KEY}"},
+            json={
+                "model": config.CEREBRAS_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": temperature,
+                "max_completion_tokens": 4000,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return json.loads(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Cerebras %s: %s", config.CEREBRAS_MODEL, exc)
+        return None
+
+
 def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит до GitHub Models (OpenAI-сумісний) — третій безкоштовний провайдер."""
+    """JSON-запит до GitHub Models (OpenAI-сумісний) — четвертий безкоштовний провайдер."""
     if not config.GITHUB_TOKEN:
         return None
     try:
@@ -541,7 +565,8 @@ def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
 
 
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → GitHub Models.
+    """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → Cerebras →
+    GitHub Models.
 
     Кожен наступний вмикається, лише коли попередній без квоти чи впав.
     """
@@ -563,7 +588,11 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
             except Exception as exc:  # noqa: BLE001
                 log.warning("Gemini %s: %s", model, exc)
                 continue
-    return _groq_json(prompt, temperature) or _github_models_json(prompt, temperature)
+    return (
+        _groq_json(prompt, temperature)
+        or _cerebras_json(prompt, temperature)
+        or _github_models_json(prompt, temperature)
+    )
 
 
 _DEVELOPMENT_ADDENDUM = """

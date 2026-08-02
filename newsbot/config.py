@@ -33,13 +33,22 @@ GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.0-flas
 # Другий AI-провайдер (безкоштовний Groq): вмикається, коли Gemini без квоти
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-# Третій AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
+# Третій AI-провайдер (безкоштовний Cerebras): додано 2026-08-01, коли GitHub
+# Models пішов у retirement brownout (410 Gone) і весь каскад одночасно
+# впав разом з вичерпаною квотою Gemini/Groq — канал на 30+ хв лишився без
+# постів із TG-трендів (Ukrnet-фолбек без AI все ще працював). Найщедріший
+# безкоштовний тариф з відомих альтернатив (1M токенів/добу, без картки).
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
+CEREBRAS_MODEL = os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b")
+# Четвертий AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
 # GITHUB_TOKEN (потрібен permissions: models: read у workflow), без окремого ключа.
+# Лишений останнім у каскаді (не видалений) — на випадок, якщо retirement
+# brownout виявиться тимчасовим, а не остаточним згортанням сервісу.
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
 GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
 
 # Чи доступний хоч один AI-провайдер (для генерації текстів)
-AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or GITHUB_TOKEN)
+AI_AVAILABLE = bool(GEMINI_API_KEY or GROQ_API_KEY or CEREBRAS_API_KEY or GITHUB_TOKEN)
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"
