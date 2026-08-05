@@ -716,11 +716,7 @@
   }
  },
  "last_regular_post_at": "2026-08-05T13:50:38.051300+03:00",
- "active_alert": {
-  "message_id": 1882,
-  "posted_at": "2026-08-05T09:55:25.384035+03:00",
-  "caption": "<b><tg-emoji emoji-id=\"5415701443812303271\">🚀</tg-emoji> ❗️ Повітряна тривога</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-08-05",
  "cash_rates": {
   "date": "2026-08-05",
