@@ -1,15 +1,19 @@
 """Читання стрічки Укрнету та сторінок кластерів."""
 from __future__ import annotations
 
+import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 from . import config
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,9 +62,34 @@ def _fix_encoding(resp: requests.Response) -> None:
         resp.encoding = resp.apparent_encoding
 
 
+def _via_proxy(url: str) -> requests.Response:
+    """Читає url через ланцюжок шлюзів config.READER_PROXIES, по черзі, з
+    повторами на кожному. Повтор важливіший за перебір: реальна причина збоїв
+    (перевірено 06.08.2026) — плаваючий 403 анонімного пулу r.jina.ai, який
+    минає за секунди. Кидає останню помилку, якщо не спрацював жоден."""
+    last_exc: Exception = RuntimeError("немає налаштованих шлюзів")
+    for template, quote_url, timeout in config.READER_PROXIES:
+        target = template.format(url=quote(url, safe="") if quote_url else url)
+        headers = {"User-Agent": config.USER_AGENT, "X-Return-Format": "html"}
+        if config.JINA_API_KEY and "jina.ai" in template:
+            headers["Authorization"] = f"Bearer {config.JINA_API_KEY}"
+        for attempt in range(1, config.READER_PROXY_ATTEMPTS + 1):
+            try:
+                resp = requests.get(target, headers=headers, timeout=timeout)
+                resp.raise_for_status()
+                _fix_encoding(resp)
+                return resp
+            except Exception as exc:  # noqa: BLE001 — пробуємо наступну спробу/шлюз
+                last_exc = exc
+                log.warning("Шлюз %s спроба %d: %s", template.split("/")[2], attempt, exc)
+                if attempt < config.READER_PROXY_ATTEMPTS:
+                    time.sleep(2 * attempt)  # плаваючий ліміт минає за секунди
+    raise last_exc
+
+
 def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
     """GET із запасним ходом: сайти (зокрема Укрнет) блокують IP дата-центрів,
-    тому при 403/429 HTML-сторінки перечитуємо через шлюз r.jina.ai."""
+    тому при 403/429 HTML-сторінки перечитуємо через шлюзи-читалки."""
     try:
         resp = requests.get(
             url,
@@ -75,14 +104,7 @@ def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
         status = exc.response.status_code if exc.response is not None else 0
         if not proxy_fallback or status not in (401, 403, 429, 451):
             raise
-    resp = requests.get(
-        config.READER_PROXY + url,
-        headers={"User-Agent": config.USER_AGENT, "X-Return-Format": "html"},
-        timeout=90,
-    )
-    resp.raise_for_status()
-    _fix_encoding(resp)
-    return resp
+    return _via_proxy(url)
 
 
 def fetch_feed(now: datetime) -> list[FeedItem]:
