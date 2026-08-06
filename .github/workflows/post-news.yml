@@ -16,13 +16,21 @@ permissions:
   contents: write
   models: read
 
-concurrency:
-  group: news-post
-  cancel-in-progress: false
+# УВАГА: concurrency навмисно НЕ на рівні workflow, а на рівні кожної job.
+# Було 06.08.2026: група трималася на весь запуск, тож повільна job instagram
+# (до 15 хв, ще й ставить ffmpeg через apt-get) блокувала слот, і 68% запусків
+# скасовувалися чергою — канал мовчав по 36-79 хв замість 10-20. Тепер кожна
+# job має власну групу й таймаут: постинг у канал не залежить від кросспостів.
 
 jobs:
   post:
     runs-on: ubuntu-latest
+    # Одночасно лише один постинг: інакше можливі дублі в каналі й конфлікт
+    # push-у state.json між паралельними запусками.
+    concurrency:
+      group: news-post
+      cancel-in-progress: false
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,11 +94,15 @@ jobs:
           fi
 
   # Незалежна задача: кросспост нових постів каналу у Threads.
-  # Працює на надійному розкладі цього ж workflow (кожні 30 хв). Її збій
-  # НЕ впливає на публікацію в канал (окрема job без needs, continue-on-error).
+  # Їде на надійному розкладі цього ж workflow (тригер кожні ~5 хв), але з
+  # ВЛАСНОЮ concurrency-групою — щоб не тримати слот постингу в канал.
   crosspost:
     runs-on: ubuntu-latest
     continue-on-error: true
+    concurrency:
+      group: crosspost-threads
+      cancel-in-progress: false
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,6 +145,12 @@ jobs:
   instagram:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # Найповільніша job (ffmpeg + завантаження відео) — власна група й жорсткий
+    # таймаут, щоб вона у жодному разі не впливала на постинг у канал.
+    concurrency:
+      group: crosspost-instagram
+      cancel-in-progress: false
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
