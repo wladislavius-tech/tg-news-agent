@@ -522,7 +522,7 @@ def _groq_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 "max_tokens": 4000,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            timeout=config.AI_TIMEOUT_FALLBACK,
         )
         resp.raise_for_status()
         return json.loads(resp.json()["choices"][0]["message"]["content"])
@@ -553,7 +553,7 @@ def _cloudflare_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 "max_tokens": 4000,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            timeout=config.AI_TIMEOUT_FALLBACK,
         )
         resp.raise_for_status()
         return _lenient_json(resp.json()["choices"][0]["message"]["content"])
@@ -582,7 +582,7 @@ def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 "max_tokens": 4000,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            timeout=config.AI_TIMEOUT_FALLBACK,
         )
         resp.raise_for_status()
         return _lenient_json(resp.json()["choices"][0]["message"]["content"])
@@ -606,7 +606,7 @@ def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
                 "max_tokens": 4000,
                 "response_format": {"type": "json_object"},
             },
-            timeout=60,
+            timeout=config.AI_TIMEOUT_GITHUB,
         )
         resp.raise_for_status()
         return json.loads(resp.json()["choices"][0]["message"]["content"])
@@ -633,7 +633,7 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen_cfg}
             try:
-                resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=60)
+                resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=config.AI_TIMEOUT_PRIMARY)
                 resp.raise_for_status()
                 return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
             except Exception as exc:  # noqa: BLE001
