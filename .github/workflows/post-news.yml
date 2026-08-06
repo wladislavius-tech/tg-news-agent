@@ -104,14 +104,34 @@ jobs:
       cancel-in-progress: false
     timeout-minutes: 6
     steps:
+      # Тригери приходять кожні ~5 хв (cron-job.org), але кросспосту така
+      # частота не потрібна: корисної роботи тут 0.7 хв, а Threads нічого не
+      # губить — черга ведеться за водяним знаком last_posted_id. Виміряно
+      # 06.08.2026: job здебільшого не працювала, а ВИСІЛА в черзі по 4.7-5.1 хв
+      # і гинула від наступного тригера (cancelled). Пропускаємо все, крім
+      # вікна :00-:05 і :30-:35 — виходить ~раз на 30 хв.
+      - name: Чи час кросспостити
+        id: gate
+        run: |
+          MIN=$(date -u +%M)
+          if [ "${{ github.event.inputs.force }}" = "true" ] || [ "$((10#$MIN % 30))" -lt 6 ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "Хвилина :$MIN поза вікном кросспосту — пропускаю."
+          fi
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'yes'
         with:
           ref: main
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'yes'
         with:
           python-version: "3.12"
-      - run: pip install requests beautifulsoup4
+      - if: steps.gate.outputs.run == 'yes'
+        run: pip install requests beautifulsoup4
       - name: Відновити стан кросспосту
+        if: steps.gate.outputs.run == 'yes'
         uses: actions/cache/restore@v4
         with:
           path: crosspost_state.json
@@ -119,6 +139,7 @@ jobs:
           restore-keys: |
             crosspost-state-
       - name: Кросспост у Threads
+        if: steps.gate.outputs.run == 'yes'
         env:
           THREADS_TOKEN: ${{ secrets.THREADS_TOKEN }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -132,7 +153,10 @@ jobs:
           SEED_LAST_ID: "207"
         run: python crosspost.py
       - name: Зберегти стан кросспосту
-        if: always()
+        # always() — щоб стан ліг у кеш навіть при збої самого кросспосту,
+        # але тільки якщо крок узагалі виконувався (інакше на пропущених
+        # запусках у кеш пішов би порожній файл і водяний знак скинувся б).
+        if: always() && steps.gate.outputs.run == 'yes'
         uses: actions/cache/save@v4
         with:
           path: crosspost_state.json
