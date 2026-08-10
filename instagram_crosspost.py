@@ -187,6 +187,21 @@ def _find_font() -> str | None:
     return None
 
 
+def _probe_aspect(path: Path) -> float | None:
+    """Співвідношення сторін джерельного відео (ширина/висота), або None
+    при збої ffprobe."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=15,
+        )
+        w, h = out.stdout.strip().split(",")
+        return int(w) / int(h)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _escape_drawtext(text: str) -> str:
     """Екранування для значення drawtext: кома розриває ланцюжок фільтрів,
     двокрапка/апостроф/бекслеш конфліктують із синтаксисом самого фільтра."""
@@ -254,10 +269,25 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
         if title_text else ""
     )
 
+    # Мобільна стрічка Instagram масштабує/обрізає невертикальне відео під
+    # весь екран (десктоп-вебу цей нюанс не стосується — там показує з
+    # полями), і текст біля країв "живого" кадру може випасти з обрізаної
+    # частини. Тому аналізуємо РЕАЛЬНІ пропорції джерела через ffprobe: якщо
+    # відео вже майже вертикальне (близько до 9:16) — лишаємо оригінал як є
+    # (найкраща якість); якщо горизонтальне/квадратне — підганяємо під 9:16
+    # без полів (crop-to-fill, трохи країв кадру може обрізатись, це не
+    # критично), щоб напис гарантовано лишався у видимій зоні всюди.
+    aspect = _probe_aspect(src)
+    needs_reformat = aspect is not None and aspect > 0.75
+    crop_fill = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+    base_in = f"[0:v]{crop_fill}[base];" if needs_reformat else ""
+    base_ref = "[base]" if needs_reformat else "[0:v]"
+
     if LOGO_PATH.exists():
         filter_complex = (
+            f"{base_in}"
             f"[1:v]scale={LOGO_SIZE}:{LOGO_SIZE}[logo];"
-            f"[0:v][logo]overlay={logo_x}:{WM_MARGIN}[wm];"
+            f"{base_ref}[logo]overlay={logo_x}:{WM_MARGIN}[wm];"
             f"[wm]drawtext=fontfile='{font_escaped}':text='{label}':fontsize=30:fontcolor=white:"
             f"box=1:boxcolor=0x0A122A@0.6:boxborderw=8:x=w-tw-{WM_MARGIN}:y={text_y}[wm2]"
         )
@@ -270,14 +300,15 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
             str(dst),
         ]
     else:
-        vf = (
-            f"drawtext=fontfile='{font_escaped}':text='{label}':fontsize=26:fontcolor=white:"
-            "box=1:boxcolor=0x0A122A@0.6:boxborderw=10:x=w-tw-20:y=30"
+        filter_complex = (
+            f"{base_in}"
+            f"{base_ref}drawtext=fontfile='{font_escaped}':text='{label}':fontsize=26:fontcolor=white:"
+            f"box=1:boxcolor=0x0A122A@0.6:boxborderw=10:x=w-tw-20:y=30[wm2]"
         )
-        if title_filter:
-            vf += f",{title_filter}"
+        filter_complex += f";[wm2]{title_filter}[out]" if title_filter else ";[wm2]copy[out]"
         cmd = [
-            "ffmpeg", "-y", "-i", str(src), "-vf", vf,
+            "ffmpeg", "-y", "-i", str(src),
+            "-filter_complex", filter_complex, "-map", "[out]", "-map", "0:a?",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "main",
             "-c:a", "aac", "-b:a", "128k",
             str(dst),
