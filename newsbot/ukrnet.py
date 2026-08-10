@@ -70,10 +70,17 @@ def _via_proxy(url: str) -> requests.Response:
     last_exc: Exception = RuntimeError("немає налаштованих шлюзів")
     for template, quote_url, timeout in config.READER_PROXIES:
         target = template.format(url=quote(url, safe="") if quote_url else url)
-        headers = {"User-Agent": config.USER_AGENT, "X-Return-Format": "html"}
-        if config.JINA_API_KEY and "jina.ai" in template:
-            headers["Authorization"] = f"Bearer {config.JINA_API_KEY}"
         for attempt in range(1, config.READER_PROXY_ATTEMPTS + 1):
+            headers = {"User-Agent": config.USER_AGENT, "X-Return-Format": "html"}
+            # Ключ jina.ai підставляємо ЛИШЕ з другої спроби. Безкоштовна
+            # квота — 10 млн токенів, а стрічку Укрнету (210 КБ) ми читаємо
+            # через проксі щоразу: з дата-центрового IP прямий запит завжди
+            # 403. Якби ключ ішов на кожен запит, квоти вистачило б приблизно
+            # на добу. Анонімний пул спрацьовує у ~9 випадках з 10, тож ключ
+            # витрачається лише на реальні збої — і квоти стає на місяці.
+            if attempt > 1 and config.JINA_API_KEY and "jina.ai" in template:
+                headers["Authorization"] = f"Bearer {config.JINA_API_KEY}"
+                log.info("Повтор через jina.ai з ключем (анонімний пул відмовив)")
             try:
                 resp = requests.get(target, headers=headers, timeout=timeout)
                 resp.raise_for_status()
