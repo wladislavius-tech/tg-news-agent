@@ -54,6 +54,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Необов'язковий: власна квота r.jina.ai замість спільного
+          # анонімного пулу. Без нього читання Укрнету спирається на пул,
+          # який плаваюче віддає 403 (див. newsbot/config.py READER_PROXIES).
+          # Порожній секрет = поведінка як раніше, нічого не ламається.
+          JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
         run: |
           if [ "${{ inputs.force }}" = "true" ]; then
             python -m newsbot.main --force
