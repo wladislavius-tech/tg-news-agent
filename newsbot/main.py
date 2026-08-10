@@ -807,7 +807,10 @@ def run(dry_run: bool, force: bool) -> None:
     todays_titles = daily.get("titles", [])
     todays_facts = daily.get("facts", [])
     today_pairs = list(zip_longest(todays_titles, todays_facts, fillvalue=""))
-    tail_pairs = [(t, "") for t in state["posted_titles"][-10:]]
+    # Хвіст учорашніх: 10 -> 30. При 63 постах/добу (аудит 10.08.2026) десяти
+    # заголовків вистачало на ~4 год, тож ранкові дублі вчорашніх подій
+    # проходили — саме так пройшов дубль із різницею 23 год.
+    tail_pairs = [(t, "") for t in state["posted_titles"][-30:]]
     seen_titles: set[str] = set()
     recent: list[tuple[str, str]] = []
     for t, f in today_pairs + tail_pairs:
@@ -815,7 +818,7 @@ def run(dry_run: bool, force: bool) -> None:
             continue
         seen_titles.add(t)
         recent.append((t, f))
-    recent = recent[-50:]
+    recent = recent[-70:]
 
     prior_context_by_id: dict[str, str] = {}
     filtered = []

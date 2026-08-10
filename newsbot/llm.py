@@ -53,6 +53,10 @@ _ATTR_PHRASE_RE = re.compile(
 
 _CAPTION_ATTR_RE = re.compile(r"<b>.*?,\s*—\s*([^<]+?)</b>")
 
+# Скільки останніх постів показувати моделі при перевірці на дубль/розвиток.
+# Локальні перевірки бачать ширше вікно (~70), AI — лише цей зріз.
+AI_COMPARE_WINDOW = 30
+
 
 def attributed_source(caption: str) -> str:
     """Дістає назву джерела з атрибуції в заголовку («, — Джерело») готового
@@ -325,6 +329,11 @@ def classify_relation(
     if not recent or not config.AI_AVAILABLE:
         return "unrelated", ""
     alt = "\n".join(f"  (інші видання: {t})" for t in alt_titles[:4])
+    # Вікно порівняння розширене до ~70 постів (див. state.recent_titles), але
+    # в промпт беремо лише найсвіжіші: довгий список і роздуває запит, і
+    # ускладнює моделі вибір. Ширше вікно й так покривають локальні перевірки
+    # (state.is_near_exact_duplicate), яким AI не потрібен.
+    recent = recent[-AI_COMPARE_WINDOW:]
     listing = "\n".join(f"{i + 1}. {t}" for i, (t, _f) in enumerate(recent))
     data = _gemini_json(
         f"Нова новина: «{title}»\n{alt}\n\n"
