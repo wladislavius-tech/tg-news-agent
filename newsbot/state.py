@@ -125,7 +125,44 @@ def is_duplicate_image(state: dict, image_bytes: bytes) -> bool:
     першоджерела. generic/logo-фото (main.py: media["_local_asset"]) сюди
     НЕ потрапляють — вони легітимно повторюються завжди."""
     h = hashlib.md5(image_bytes).hexdigest()
-    return h in state.get("recent_image_hashes", [])
+    if h in state.get("recent_image_hashes", []):
+        return True
+    # md5 ловить лише БАЙТ-У-БАЙТ той самий файл. Реальний кейс 15.08.2026:
+    # удар по Марганцю опублікувався двічі (09:01 і 11:36) — те саме фото
+    # пожежі, але з різних видань, тож інше кадрування/стиснення й інший md5.
+    # Перцептивний хеш стійкий до масштабу, перестиснення й дрібного кропу.
+    d = _dhash(image_bytes)
+    if not d:
+        return False
+    return any(
+        _hamming(d, old) <= config.IMAGE_DHASH_MAX_DISTANCE
+        for old in state.get("recent_image_dhashes", [])
+    )
+
+
+def _dhash(image_bytes: bytes, size: int = 8) -> int | None:
+    """Перцептивний хеш (difference hash): 64 біти з порівняння сусідніх
+    пікселів у зменшеній ЧБ-версії. Однакова картинка в іншому розмірі чи
+    якості дає той самий (або майже той самий) хеш."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        img = Image.open(BytesIO(image_bytes)).convert("L").resize(
+            (size + 1, size), Image.LANCZOS
+        )
+    except Exception:  # noqa: BLE001 — бите фото не має валити постинг
+        return None
+    bits = 0
+    for y in range(size):
+        for x in range(size):
+            bits = (bits << 1) | int(img.getpixel((x, y)) < img.getpixel((x + 1, y)))
+    return bits
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
 
 
 def remember_image_hash(state: dict, image_bytes: bytes) -> None:
@@ -133,6 +170,11 @@ def remember_image_hash(state: dict, image_bytes: bytes) -> None:
     hashes = state.setdefault("recent_image_hashes", [])
     hashes.append(h)
     state["recent_image_hashes"] = hashes[-config.MAX_REMEMBERED_IMAGE_HASHES:]
+    d = _dhash(image_bytes)
+    if d is not None:
+        dhashes = state.setdefault("recent_image_dhashes", [])
+        dhashes.append(d)
+        state["recent_image_dhashes"] = dhashes[-config.MAX_REMEMBERED_IMAGE_HASHES:]
 
 
 def is_near_exact_duplicate(title: str, recent: list[str], threshold: float = 0.9) -> bool:
