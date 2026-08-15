@@ -8,10 +8,8 @@ Instagram не приймає текстові пости, тому для ко�
   2. Відео ЦІЄЇ Ж новини на інших моніторингових каналах (tgtrends,
      newsbot/config.TREND_CHANNELS) — якщо власного поста немає, але подію
      висвітлив хтось із конкурентів з відео.
-  3. Якщо реального відео немає ніде — AI-озвучене відео (фото + заголовок
-     + синтез мовлення, той самий рушій, що й tiktok/generate.py), з денним
-     лімітом (FALLBACK_DAILY_MAX), щоб такого контенту було лише 1-2 на день,
-     а не заміна всіх текстових новин.
+Якщо реального відео немає ніде — пост просто пропускається (без синтетичної
+генерації).
 
 Перед публікацією відео тимчасово завантажується, на нього накладається
 текстовий водяний знак каналу (ffmpeg drawtext) і результат недовго
@@ -22,10 +20,9 @@ Instagram не приймає текстові пости, тому для ко�
 Підпис — текст самого поста (обрізаний), хештеги і посилання на цей
 конкретний пост у каналі (не клікабельне в Instagram, але видиме як текст).
 
-Стан (watermark за id + денний лічильник AI-відео) —
-instagram_crosspost_state.json (кеш Actions). Секрети: INSTAGRAM_TOKEN,
-IG_USER_ID. Для gh release потрібен GH_TOKEN — в Actions це вбудований
-GITHUB_TOKEN, gh CLI підхоплює його сам.
+Стан (watermark за id) — instagram_crosspost_state.json (кеш Actions).
+Секрети: INSTAGRAM_TOKEN, IG_USER_ID. Для gh release потрібен GH_TOKEN —
+в Actions це вбудований GITHUB_TOKEN, gh CLI підхоплює його сам.
 """
 from __future__ import annotations
 
@@ -43,10 +40,7 @@ from zoneinfo import ZoneInfo
 import requests
 from bs4 import BeautifulSoup
 
-import instagram_slide
-from newsbot import generic_photos, tgtrends, ukrnet
-from tiktok import tts
-from tiktok import video as video_render
+from newsbot import tgtrends
 
 BASE = Path(__file__).parent
 KYIV = ZoneInfo("Europe/Kyiv")
@@ -62,7 +56,6 @@ SEED_LAST_ID = int(os.environ.get("SEED_LAST_ID", "0"))
 IG_USER_ID = os.environ.get("IG_USER_ID", "")
 GH_REPO = os.environ.get("GITHUB_REPOSITORY", "wladislavius-tech/tg-news-agent")
 RELEASE_TAG = "instagram-media"
-FALLBACK_DAILY_MAX = int(os.environ.get("FALLBACK_DAILY_MAX", "2"))
 
 
 def load_state() -> dict:
@@ -73,9 +66,6 @@ def load_state() -> dict:
 
 def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-_BG_IMAGE_RE = re.compile(r"background-image:url\('([^']+)'\)")
 
 
 def fetch_posts() -> list[dict]:
@@ -91,17 +81,11 @@ def fetch_posts() -> list[dict]:
         text = text_el.get_text(" ", strip=True) if text_el else ""
         if not text:
             continue
-        image = None
-        photo_el = msg.select_one(".tgme_widget_message_photo_wrap")
-        if photo_el and photo_el.get("style"):
-            img_m = _BG_IMAGE_RE.search(photo_el["style"])
-            if img_m:
-                image = img_m.group(1)
         video = None
         video_el = msg.select_one("video.tgme_widget_message_video")
         if video_el and video_el.get("src"):
             video = video_el["src"]
-        posts.append({"id": int(m.group(1)), "text": text, "image": image, "video": video})
+        posts.append({"id": int(m.group(1)), "text": text, "video": video})
     return posts
 
 
@@ -494,79 +478,6 @@ def find_source_video(post: dict) -> str | None:
         return None
 
 
-# --- AI-озвучене fallback-відео (коли реального відео немає ніде) -----------
-
-def _fallback_background(body: str, image_url: str | None) -> bytes | None:
-    """Реальне фото поста → фото тієї ж новини з іншого каналу → куратована
-    фото-заглушка за темою → None (тоді рендер сам покладе градієнт). AI-
-    малювання картинки з нуля свідомо НЕ використовується (як і в TikTok)."""
-    if image_url:
-        img = ukrnet.download_image(image_url)
-        if img:
-            return img
-    try:
-        m_image, _ = tgtrends.find_matching_media(body, dt.datetime.now(KYIV), exclude_channel=CHANNEL)
-        if m_image:
-            img = ukrnet.download_image(m_image)
-            if img:
-                return img
-    except Exception as e:  # noqa: BLE001
-        print(f"[!] Пошук фону для fallback-відео: {e}")
-    photo, _ = generic_photos.pick(body, dt.datetime.now(KYIV))
-    return photo
-
-
-def generate_fallback_video(post: dict, tmpdir: Path) -> Path | None:
-    try:
-        clean_text = _strip_emoji(post["text"])
-        body = format_body(clean_text, limit=420)
-        headline_text = headline(post["text"], max_chars=70)
-        background = _fallback_background(body, post.get("image"))
-        frame_png = instagram_slide.render_slide(
-            headline_text, background=background, watermark_label=WATERMARK_LABEL,
-        )
-
-        narration = f"{body} Більше новин на каналі {WATERMARK_LABEL} в Телеграм."
-        frame_path = tmpdir / f"fb_{post['id']}.png"
-        audio_path = tmpdir / f"fb_{post['id']}.mp3"
-        video_path = tmpdir / f"ig_fb_{post['id']}.mp4"
-        frame_path.write_bytes(frame_png)
-        try:
-            tts.synthesize(narration, audio_path)
-            video_render.render(frame_path, audio_path, video_path)
-        finally:
-            frame_path.unlink(missing_ok=True)
-            audio_path.unlink(missing_ok=True)
-        return video_path if video_path.exists() else None
-    except Exception as e:  # noqa: BLE001 — збій генерації не має валити весь ран
-        print(f"[!] Генерація fallback-відео: {e}")
-        return None
-
-
-def publish_fallback(token: str, post: dict) -> bool:
-    with tempfile.TemporaryDirectory() as td:
-        video_path = generate_fallback_video(post, Path(td))
-        if not video_path:
-            return False
-        video_url = upload_release_asset(video_path)
-        if not video_url:
-            return False
-        try:
-            post_id = post_instagram_video(token, video_url, build_caption(post))
-        finally:
-            delete_release_asset(video_path.name)
-        return bool(post_id)
-
-
-def fallback_quota_left(state: dict) -> int:
-    today = dt.date.today().isoformat()
-    fb = state.setdefault("fallback", {"date": today, "count": 0})
-    if fb.get("date") != today:
-        fb["date"] = today
-        fb["count"] = 0
-    return FALLBACK_DAILY_MAX - fb["count"]
-
-
 def main() -> None:
     state = load_state()
     if state["last_posted_id"] == 0 and SEED_LAST_ID:
@@ -606,20 +517,13 @@ def main() -> None:
             video_url = find_source_video(p)
             source = "відео іншого каналу"
 
-        if video_url:
-            print(f"Пост {p['id']} [{source}]: {p['text'][:60]}...")
-            ok = publish_post(token, {**p, "video": video_url})
-        elif fallback_quota_left(state) > 0:
-            print(f"Пост {p['id']} [AI-озвучене відео, {fallback_quota_left(state)} "
-                  f"з {FALLBACK_DAILY_MAX} лишилось на сьогодні]: {p['text'][:60]}...")
-            ok = publish_fallback(token, p)
-            if ok:
-                state["fallback"]["count"] += 1
-        else:
-            print(f"Пост {p['id']}: немає відео ніде, денний ліміт AI-відео вичерпано — пропускаю")
+        if not video_url:
             state["last_posted_id"] = p["id"]
             save_state(state)
             continue
+
+        print(f"Пост {p['id']} [{source}]: {p['text'][:60]}...")
+        ok = publish_post(token, {**p, "video": video_url})
 
         if ok:
             print("  Instagram: опубліковано")

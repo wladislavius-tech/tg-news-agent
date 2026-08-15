@@ -168,8 +168,8 @@ jobs:
           key: crosspost-state-${{ github.run_id }}
 
   # Незалежна задача: кросспост відео в Instagram Reels — власне відео поста
-  # → відео тієї ж новини з інших каналів (tgtrends) → AI-озвучене відео
-  # (фото+заголовок+синтез мовлення, ліміт FALLBACK_DAILY_MAX/добу). Її збій
+  # → відео тієї ж новини з інших каналів (tgtrends). Без відео ніде — пост
+  # пропускається (без синтетичної AI-генерації, тимчасово вимкнено). Її збій
   # НЕ впливає на публікацію в канал і на Threads (без needs, continue-on-error,
   # окремий кеш стану).
   instagram:
@@ -188,7 +188,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt
+      - run: pip install requests beautifulsoup4 Pillow
       - name: Перевірити наявність ffmpeg
         run: which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
       - name: Відновити стан Instagram-кросспосту
@@ -206,7 +206,6 @@ jobs:
           CHANNEL: Suputnyk_news
           WATERMARK_LABEL: Suputnyk_news
           MAX_PER_RUN: "2"
-          FALLBACK_DAILY_MAX: "2"
         run: python instagram_crosspost.py
       - name: Зберегти стан Instagram-кросспосту
         if: always()
