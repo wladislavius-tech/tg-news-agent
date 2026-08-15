@@ -278,7 +278,12 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     # без полів (crop-to-fill, трохи країв кадру може обрізатись, це не
     # критично), щоб напис гарантовано лишався у видимій зоні всюди.
     aspect = _probe_aspect(src)
-    needs_reformat = aspect is not None and aspect > 0.75
+    # Якщо ffprobe не зміг визначити пропорції (мережа/збій) — безпечніше
+    # ПІДСТРАХУВАТИСЯ й кадрувати, ніж мовчки лишити ризиковане широке відео
+    # як є: гірший наслідок помилкового кадрування (трохи зайвого обрізано)
+    # значно дешевший за втрату всього тексту в мобільній стрічці.
+    needs_reformat = aspect is None or aspect > 0.75
+    print(f"  [аспект джерела: {aspect}, кадрування під 9:16: {needs_reformat}]")
     crop_fill = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
     base_in = f"[0:v]{crop_fill}[base];" if needs_reformat else ""
     base_ref = "[base]" if needs_reformat else "[0:v]"
