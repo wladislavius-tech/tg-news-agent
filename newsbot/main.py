@@ -292,6 +292,28 @@ def build_post(
     if not sources:
         img_reasons.append("Укрнет не дав жодного джерела для цього кластера")
 
+    # 2b) Друга спроба з послабленим порогом «плоскості». Суворий поріг (0.62)
+    # відсіює заглушки видань, але разом з ними — і справжні фото з великими
+    # однорідними ділянками (небо, стіна, сніг). Реальний кейс 15.08.2026:
+    # фото niknews дало 0.66, відкинулось, і пост вийшов зовсім без картинки.
+    # Тут альтернатива вже не «краще фото», а «хоч якесь проти нічого».
+    if not images and sources:
+        for i in range(min(len(sources), tries)):
+            if i > 0 and not _topically_related(sources[0].title, sources[i].title):
+                continue
+            m = src_meta(i)
+            if not m.image_url:
+                continue
+            img = ukrnet.download_image(m.image_url, relaxed=True)
+            if img:
+                images.append(img)
+                first_image_url = first_image_url or m.image_url
+                log.info(
+                    "Фото взято з послабленою перевіркою (%s) — суворий поріг не пройшло жодне",
+                    sources[i].domain,
+                )
+                break
+
     # 3) Власних фото немає — шукаємо цю ж подію в каналах-конкурентах
     if not images:
         alt_image_url, _alt_video_url = tgtrends.find_matching_media(

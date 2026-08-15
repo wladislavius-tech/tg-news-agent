@@ -286,8 +286,12 @@ _PLACEHOLDER_URL_RE = re.compile(
 )
 
 
-def download_image(url: str) -> bytes | None:
-    """Завантажує картинку статті; None — якщо бита, замала, неякісна або заглушка."""
+def download_image(url: str, relaxed: bool = False) -> bytes | None:
+    """Завантажує картинку статті; None — якщо бита, замала, неякісна або заглушка.
+
+    relaxed=True — послаблена перевірка «плоскості» для ДРУГОЇ спроби, коли за
+    суворим порогом не пройшло жодне фото з усіх джерел (див. main.build_post).
+    Решта перевірок — розмір, формат, пропорції — лишаються тими самими."""
     if not url or _PLACEHOLDER_URL_RE.search(url):
         return None
     try:
@@ -297,12 +301,12 @@ def download_image(url: str) -> bytes | None:
     ctype = resp.headers.get("Content-Type", "")
     if "image" not in ctype or len(resp.content) < config.MIN_IMAGE_BYTES:
         return None
-    if not _image_quality_ok(resp.content):
+    if not _image_quality_ok(resp.content, relaxed=relaxed):
         return None
     return resp.content
 
 
-def _image_quality_ok(data: bytes) -> bool:
+def _image_quality_ok(data: bytes, relaxed: bool = False) -> bool:
     """Відсіює замалі картинки, кадри-банери та логотипи-заглушки.
 
     Логотип на рівному тлі має мало відтінків і домінантний колір;
@@ -335,7 +339,8 @@ def _image_quality_ok(data: bytes) -> bool:
     q = thumb.point(lambda v: (v // 48) * 48)
     counts = sorted((c for c, _ in (q.getcolors(64 * 64) or [])), reverse=True)
     top3_share = sum(counts[:3]) / (64 * 64)
-    if top3_share > config.IMAGE_FLAT_TOP3:
+    limit = config.IMAGE_FLAT_TOP3_RELAXED if relaxed else config.IMAGE_FLAT_TOP3
+    if top3_share > limit:
         return False
     return True
 
