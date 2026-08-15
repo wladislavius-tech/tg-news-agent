@@ -28,8 +28,14 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 TELEGRAM_ADMIN_CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT", "")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-# Резервна модель: у кожної моделі своя квота безкоштовного тарифу
-GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.0-flash")
+# Резервна модель: у кожної моделі своя квота безкоштовного тарифу.
+# Аудит 15.08.2026: попереднє значення "gemini-2.0-flash" Google прибрав, і
+# воно віддавало 404 — тобто резерв був мертвий, а в логах це губилося серед
+# звичайних 429. Тому тепер АЛІАС, а не конкретна версія: він переїжджає на
+# актуальну модель сам і не помре мовчки при наступному виведенні з ужитку.
+# (Перевірено: "gemini-2.5-flash-lite" числиться в списку моделей, але теж
+# віддає 404 — покладатися на список не можна, лише на реальний запит.)
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
 # Другий AI-провайдер (безкоштовний Groq): вмикається, коли Gemini без квоти
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
