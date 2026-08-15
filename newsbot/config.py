@@ -244,6 +244,7 @@ TREND_CHANNELS = [
     "suspilnenews",   # Суспільне Новини
     "ukrpravda_news", # Українська правда
     "unian",          # УНІАН
+    "uanewsstream",   # UA.NEWS
 ]
 TREND_MIN_VIEWS = 30_000    # мінімум переглядів, щоб пост вважався "гарячим"
 TREND_MAX_AGE_HOURS = 3     # не старіші за стільки годин
