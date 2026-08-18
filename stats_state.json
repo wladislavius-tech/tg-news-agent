@@ -1,5 +1,5 @@
 {
- "tg_offset": 732686843,
+ "tg_offset": 732686849,
  "tg_bot_id": 8466428396,
  "tg_reactions": {
   "2863": {
@@ -31,6 +31,30 @@
    "top_emoji": "⚡"
   },
   "2874": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2878": {
+   "total": 2,
+   "top_emoji": "❤"
+  },
+  "2887": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2892": {
+   "total": 2,
+   "top_emoji": "❤"
+  },
+  "2899": {
+   "total": 2,
+   "top_emoji": "❤"
+  },
+  "2900": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2901": {
    "total": 1,
    "top_emoji": "⚡"
   }
