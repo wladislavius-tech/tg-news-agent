@@ -1,7 +1,40 @@
 {
- "tg_offset": 732686835,
+ "tg_offset": 732686843,
  "tg_bot_id": 8466428396,
- "tg_reactions": {},
+ "tg_reactions": {
+  "2863": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2864": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2865": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2866": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2867": {
+   "total": 2,
+   "top_emoji": "❤"
+  },
+  "2869": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2873": {
+   "total": 1,
+   "top_emoji": "⚡"
+  },
+  "2874": {
+   "total": 1,
+   "top_emoji": "⚡"
+  }
+ },
  "tg_joined": 0,
  "tg_left": 0,
  "last_report_date": "2026-08-18",
