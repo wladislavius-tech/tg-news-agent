@@ -276,8 +276,15 @@ def build_post(
             caption = llm.compose_post(item, sources, meta, video_credit=credit, **src_kwargs)
             return caption, {"video": video}
 
-    # 2) Фото: якісні знімки з кількох джерел. Для великих подій — альбом до 3 фото
-    want_album = item.related_count >= config.ALBUM_THRESHOLD
+    # 2) Фото: якісні знімки з кількох джерел. Для великих подій — альбом до 3 фото.
+    # Галерея-фоторепортаж у головному джерелі — теж привід для альбому: якщо
+    # видання виклало 7 кадрів, одна картинка під заголовком "показали КАДРИ"
+    # виглядає бідно (реальний кейс 19.08.2026, обмін полоненими).
+    gallery = src_meta(0).gallery_urls if sources else []
+    want_album = (
+        item.related_count >= config.ALBUM_THRESHOLD
+        or len(gallery) >= config.GALLERY_ALBUM_MIN
+    )
     tries = config.ALBUM_SOURCE_TRIES if want_album else config.IMAGE_SOURCE_TRIES
     images: list[bytes] = []
     first_image_url = ""  # для колажу вечірнього дайджесту
@@ -315,6 +322,26 @@ def build_post(
             break
         if len(images) >= config.ALBUM_MAX_PHOTOS:
             break
+    # 2a) Доповнюємо альбом кадрами з ГАЛЕРЕЇ головного джерела. Інші джерела
+    # кластера дають щонайбільше по одному og:image, тож саме фоторепортаж
+    # першоджерела — головний спосіб зібрати кілька справжніх кадрів події.
+    if gallery and want_album and len(images) < config.ALBUM_MAX_PHOTOS:
+        for gurl in gallery:
+            if len(images) >= config.ALBUM_MAX_PHOTOS:
+                break
+            gimg = ukrnet.download_image(gurl)
+            if not gimg:
+                continue
+            digest = hashlib.md5(gimg).hexdigest()
+            if digest in seen_hashes:
+                continue
+            seen_hashes.add(digest)
+            images.append(gimg)
+            first_image_url = first_image_url or gurl
+        if len(images) > 1:
+            log.info("Альбом доповнено кадрами галереї %s (усього %d)",
+                     sources[0].domain, len(images))
+
     if not sources:
         img_reasons.append("Укрнет не дав жодного джерела для цього кластера")
 

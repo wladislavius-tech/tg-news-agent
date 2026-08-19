@@ -6,7 +6,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -47,6 +47,11 @@ class ArticleMeta:
     youtube_url: str = ""  # вбудоване YouTube-відео
     body_excerpt: str = ""  # перші абзаци статті — для точності фактів у пості
     source_titles: list[str] = field(default_factory=list)
+    # Фото з ГАЛЕРЕЇ статті (крім og:image): фоторепортажі містять по 5-10
+    # кадрів, а og:image дає лише один. Реальний кейс 19.08.2026: пост
+    # "СБУ показала ексклюзивні КАДРИ" вийшов з однією картинкою, тоді як
+    # у джерела була галерея з 7 фото.
+    gallery_urls: list[str] = field(default_factory=list)
 
 
 def _fix_encoding(resp: requests.Response) -> None:
@@ -216,7 +221,39 @@ def fetch_article_meta(article_url: str) -> ArticleMeta:
         if yt:
             meta.youtube_url = f"https://www.youtube.com/watch?v={yt.group(1)}"
     meta.body_excerpt = _extract_body_excerpt(html)
+    meta.gallery_urls = _extract_gallery(html, article_url, meta.image_url)
     return meta
+
+
+# Галереї-фоторепортажі майже завжди верстаються однаково: мініатюра <img>
+# загорнута в <a href="...повний_файл.jpg">. Беремо саме href — мініатюри
+# (у ukrinform це 80x80) не пройшли б перевірку розміру.
+# Проміжних тегів між <a> і <img> дозволяємо не більше двох (буває
+# <a><figure><img>). Необмежене повторення тут ЛАМАЄ пошук: між сусідніми
+# посиланнями галереї стоять лише пробіли, тож жадібний вираз проходив крізь
+# них і "проковтував" усю галерею одним збігом — знаходило 1 фото замість 7.
+_GALLERY_LINK_RE = re.compile(
+    r'<a[^>]*href=["\']([^"\']+\.(?:jpe?g|png|webp))["\'][^>]*>\s*'
+    r'(?:<(?!/a)[^>]{0,120}>\s*){0,2}<img',
+    re.IGNORECASE,
+)
+
+
+def _extract_gallery(html: str, base_url: str, main_image: str) -> list[str]:
+    """Повнорозмірні фото галереї статті, без того, що вже є в og:image."""
+    seen: set[str] = set()
+    if main_image:
+        seen.add(main_image)
+    out: list[str] = []
+    for m in _GALLERY_LINK_RE.finditer(html):
+        url = urljoin(base_url, _unescape(m.group(1)))
+        if url in seen or _PLACEHOLDER_URL_RE.search(url):
+            continue
+        seen.add(url)
+        out.append(url)
+        if len(out) >= config.GALLERY_MAX_URLS:
+            break
+    return out
 
 
 def _extract_body_excerpt(html: str, limit: int = 900) -> str:
