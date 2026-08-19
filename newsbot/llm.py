@@ -250,6 +250,7 @@ def compose_post(
     source_name: str = "",
     require_ai: bool = False,
     prior_context: str = "",
+    prior_url: str = "",
 ) -> str:
     """Повертає готовий підпис поста (HTML для Telegram).
 
@@ -308,6 +309,12 @@ def compose_post(
         parts.append(f'▶️ <a href="{html.escape(youtube_url, quote=True)}">Дивитися відео</a>')
 
     footer_lines = []
+    # Оновлення події — даємо читачеві посилання на попередній пост, щоб він
+    # міг подивитись, з чого все почалось (а не гадав, чи це повтор).
+    if prior_url:
+        footer_lines.append(
+            f'🔄 <a href="{html.escape(prior_url, quote=True)}">Що було відомо раніше</a>'
+        )
     if source_url:
         footer_lines.append(
             f'🔎 <a href="{html.escape(source_url, quote=True)}">Джерело: {html.escape(source_name or "Telegram")}</a>'
@@ -421,8 +428,8 @@ def is_same_event(title: str, alt_titles: list[str], recent_titles: list[str]) -
 
 
 def classify_relation(
-    title: str, alt_titles: list[str], recent: list[tuple[str, str]]
-) -> tuple[str, str]:
+    title: str, alt_titles: list[str], recent: list[tuple[str, str, object]]
+) -> tuple[str, str, int]:
     """Триступенева версія is_same_event — розрізняє не лише "дубль/не дубль",
     а й "розвиток однієї з подій" (щоб об'єднати з нею факти в один пост).
 
@@ -433,17 +440,20 @@ def classify_relation(
     - ("development", <текст>)     — принциповий розвиток однієї з recent;
       <текст> — її fact, щоб compose_post() об'єднав старе й нове в один пост
     - ("unrelated", "")            — інша подія, постити як звичайну новину
-    При збої AI чи порожньому recent — ("unrelated", ""), як і is_same_event.
+    Третій елемент — індекс пов'язаного поста в recent (або -1): за ним
+    main._post_url() будує посилання "що було раніше" для читача.
+    При збої AI чи порожньому recent — ("unrelated", "", -1).
     """
     if not recent or not config.AI_AVAILABLE:
-        return "unrelated", ""
+        return "unrelated", "", -1
     alt = "\n".join(f"  (інші видання: {t})" for t in alt_titles[:4])
     # Вікно порівняння розширене до ~70 постів (див. state.recent_titles), але
     # в промпт беремо лише найсвіжіші: довгий список і роздуває запит, і
     # ускладнює моделі вибір. Ширше вікно й так покривають локальні перевірки
     # (state.is_near_exact_duplicate), яким AI не потрібен.
+    offset = max(0, len(recent) - AI_COMPARE_WINDOW)
     recent = recent[-AI_COMPARE_WINDOW:]
-    listing = "\n".join(f"{i + 1}. {t}" for i, (t, _f) in enumerate(recent))
+    listing = "\n".join(f"{i + 1}. {t}" for i, (t, *_rest) in enumerate(recent))
     data = _gemini_json(
         f"Нова новина: «{title}»\n{alt}\n\n"
         f"Уже опубліковані сьогодні пости каналу:\n{listing}\n\n"
@@ -462,21 +472,22 @@ def classify_relation(
         temperature=0.1,
     )
     if not data:
-        return "unrelated", ""
+        return "unrelated", "", -1
     relation = str(data.get("relation", "unrelated"))
     if relation == "duplicate":
-        return "duplicate", ""
+        return "duplicate", "", -1
     if relation == "development":
         try:
-            fact = recent[int(data.get("source")) - 1][1]
+            i = int(data.get("source")) - 1
+            fact = recent[i][1]
         except (TypeError, ValueError, IndexError):
-            fact = ""
+            return "unrelated", "", -1
         if fact:
-            return "development", fact
+            return "development", fact, offset + i
         # Немає збереженого контексту для об'єднання (старий запис без fact) —
         # постимо як звичайну новину, а не втрачаємо її мовчки.
-        return "unrelated", ""
-    return "unrelated", ""
+        return "unrelated", "", -1
+    return "unrelated", "", -1
 
 
 def fetch_observances(day: int, month_gen: str) -> list[str]:
@@ -774,9 +785,14 @@ _DEVELOPMENT_ADDENDUM = """
 Напиши ОДИН цілісний пост, що природно поєднує вже відомі факти з новим
 розвитком — щоб читач, який не бачив попереднього поста, зрозумів суть без
 нього (наприклад: новина про суд над організатором згадує кількість жертв
-нападу, без якого суд незрозумілий). НЕ пиши "як ми повідомляли раніше" чи
-подібні мета-посилання на власні минулі пости — просто виклади факти разом,
-як цілісну історію."""
+нападу, без якого суд незрозумілий).
+
+ОБОВ'ЯЗКОВО почни headline з позначки оновлення й познач, ЩО САМЕ змінилося:
+"🔄 Оновлено: ..." — і далі суть саме НОВОГО (зросла кількість жертв, новий
+поворот, рішення). Приклад: "🔄 Оновлено: кількість постраждалих у Печенігах
+зросла до 18". У першому абзаці одразу дай нові цифри/факти, а вже потім —
+короткий контекст того, що було відомо раніше. Так читач бачить, що це
+не повтор, а продовження історії."""
 
 
 # Реальний кейс: канал-джерело репостнув скріншот РОСІЙСЬКОГО моніторингового

@@ -125,7 +125,7 @@ def _pick_trend_fallback(
 
 def build_post(
     item: ukrnet.FeedItem, now: datetime, prior_context: str = "",
-    last_generic_photos: dict[str, str] | None = None,
+    last_generic_photos: dict[str, str] | None = None, prior_url: str = "",
 ) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
@@ -146,6 +146,8 @@ def build_post(
     src_kwargs: dict = {}
     if prior_context:
         src_kwargs["prior_context"] = prior_context
+    if prior_url:
+        src_kwargs["prior_url"] = prior_url
     if item.cluster_id.startswith("tg:"):
         # Тренд з Telegram-каналу: текст переписує Gemini (обов'язково)
         sources = []
@@ -666,6 +668,20 @@ def _published_headline(caption: str) -> str:
     return html.unescape(_HTML_TAG_RE.sub("", m.group(1))).strip()
 
 
+def _post_url(recent: list[tuple[str, str, int | None]], idx: int) -> str:
+    """Посилання на наш попередній пост за індексом у recent, або "".
+
+    Учорашні записи message_id не мають (posted_titles його не зберігає),
+    тож посилання буде лише на пости поточної доби — саме там і трапляється
+    переважна частина оновлень."""
+    if idx < 0 or idx >= len(recent):
+        return ""
+    message_id = recent[idx][2]
+    if not message_id:
+        return ""
+    return f"{config.CHANNEL_LINK}/{message_id}"
+
+
 _ALBUM_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
 
 
@@ -687,13 +703,16 @@ def _topically_related(title_a: str, title_b: str) -> bool:
 
 
 def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
-                  dry_run: bool, is_regular: bool, prior_context: str = "") -> bool:
+                  dry_run: bool, is_regular: bool, prior_context: str = "",
+                  prior_url: str = "") -> bool:
     """Збирає й публікує один пост. Повертає True при успіху.
     is_regular=True оновлює таймер звичайних новин; термінові пости — False.
-    prior_context — текст попереднього поста, якщо це його розвиток (об'єднати в один)."""
+    prior_context — текст попереднього поста, якщо це його розвиток (об'єднати в один).
+    prior_url — посилання на той пост, щоб читач бачив, з чого все почалось."""
     try:
         caption, media = build_post(
             item, now, prior_context, last_generic_photos=state.get("generic_photo_last", {}),
+            prior_url=prior_url,
         )
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
@@ -886,16 +905,25 @@ def run(dry_run: bool, force: bool) -> None:
     # заголовків вистачало на ~4 год, тож ранкові дублі вчорашніх подій
     # проходили — саме так пройшов дубль із різницею 23 год.
     tail_pairs = [(t, "") for t in state["posted_titles"][-30:]]
+    # message_id кожного сьогоднішнього поста — щоб при РОЗВИТКУ події дати
+    # читачеві посилання на попередній пост ("що було раніше"). Учорашній
+    # хвіст id не має (posted_titles їх не зберігає), тож там None.
+    todays_ids = (daily.get("message_ids") or [])
+    ids_by_title = {
+        t: (todays_ids[i] if i < len(todays_ids) else None)
+        for i, t in enumerate(todays_titles)
+    }
     seen_titles: set[str] = set()
-    recent: list[tuple[str, str]] = []
+    recent: list[tuple[str, str, int | None]] = []
     for t, f in today_pairs + tail_pairs:
         if t in seen_titles:
             continue
         seen_titles.add(t)
-        recent.append((t, f))
+        recent.append((t, f, ids_by_title.get(t)))
     recent = recent[-70:]
 
     prior_context_by_id: dict[str, str] = {}
+    prior_url_by_id: dict[str, str] = {}
     filtered = []
     for cand in candidates[:2]:
         alt_titles: list[str] = []
@@ -904,12 +932,12 @@ def run(dry_run: bool, force: bool) -> None:
                 alt_titles = [s.title for s in ukrnet.fetch_cluster_sources(cand.url)]
             except Exception:  # noqa: BLE001
                 pass
-        if recent and state_mod.is_near_exact_duplicate(cand.title, [t for t, _ in recent]):
+        if recent and state_mod.is_near_exact_duplicate(cand.title, [t for t, _, _ in recent]):
             # Практично дослівний повтор — не варто чекати на AI (і працює,
             # навіть коли AI взагалі недоступний, див. is_near_exact_duplicate).
-            relation, fact = "duplicate", ""
+            relation, fact, src_idx = "duplicate", "", -1
         else:
-            relation, fact = llm.classify_relation(cand.title, alt_titles, recent)
+            relation, fact, src_idx = llm.classify_relation(cand.title, alt_titles, recent)
         if relation == "duplicate":
             log.info("Семантичний дубль, пропускаю назавжди: %r", cand.title)
             state["posted_ids"].append(cand.cluster_id)
@@ -920,6 +948,9 @@ def run(dry_run: bool, force: bool) -> None:
             if relation == "development":
                 log.info("Розвиток події — об'єдную з попереднім постом: %r", cand.title)
                 prior_context_by_id[cand.cluster_id] = fact
+                url = _post_url(recent, src_idx)
+                if url:
+                    prior_url_by_id[cand.cluster_id] = url
             filtered.append(cand)
     candidates = filtered + candidates[2:]
     if not candidates:
@@ -928,16 +959,19 @@ def run(dry_run: bool, force: bool) -> None:
         # коли інші великі канали вже щось запостили).
         fallback = _pick_trend_fallback(state, now, items)
         if fallback and recent:
-            if state_mod.is_near_exact_duplicate(fallback.title, [t for t, _ in recent]):
-                relation, fact = "duplicate", ""
+            if state_mod.is_near_exact_duplicate(fallback.title, [t for t, _, _ in recent]):
+                relation, fact, src_idx = "duplicate", "", -1
             else:
-                relation, fact = llm.classify_relation(fallback.title, [], recent)
+                relation, fact, src_idx = llm.classify_relation(fallback.title, [], recent)
             if relation == "duplicate":
                 log.info("Тренд із Telegram теж дубль, пропускаю: %r", fallback.title)
                 fallback = None
             elif relation == "development":
                 log.info("Тренд із Telegram — розвиток події: %r", fallback.title)
                 prior_context_by_id[fallback.cluster_id] = fact
+                url = _post_url(recent, src_idx)
+                if url:
+                    prior_url_by_id[fallback.cluster_id] = url
         if fallback:
             candidates = [fallback]
             log.info("Усі новини Укрнету — дублі, беру тренд із Telegram: %r", fallback.title)
@@ -967,7 +1001,7 @@ def run(dry_run: bool, force: bool) -> None:
         # вище (він рахує лише перші 2, щоб не сипати зайвими викликами AI) — тож
         # звіряємо їх і проти вже опублікованого сьогодні/вчора (recent), а не
         # лише проти вибраного в цьому самому циклі (chosen_titles).
-        recent_titles_only = [t for t, _ in recent]
+        recent_titles_only = [t for t, _, _ in recent]
         for cand in candidates[1:5]:
             if len(chosen) >= limit:
                 break
@@ -994,7 +1028,8 @@ def run(dry_run: bool, force: bool) -> None:
             time.sleep(gap)
         log.info("Готую пост: %r (%d публікацій)", item.title, item.related_count)
         ctx = prior_context_by_id.get(item.cluster_id, "")
-        if _publish_item(state, item, now, dry_run, is_regular=True, prior_context=ctx):
+        if _publish_item(state, item, now, dry_run, is_regular=True, prior_context=ctx,
+                         prior_url=prior_url_by_id.get(item.cluster_id, "")):
             continue
         # Відкат: відео-тренд не зібрався (напр. AI недоступний для переписування) —
         # беремо звичайну новину Укрнету, яка може вийти й без AI. Цей кандидат
@@ -1006,14 +1041,15 @@ def run(dry_run: bool, force: bool) -> None:
             None,
         )
         if fallback and recent:
-            recent_titles_only = [t for t, _ in recent]
+            recent_titles_only = [t for t, _, _ in recent]
             if state_mod.is_near_exact_duplicate(fallback.title, recent_titles_only) or llm.is_same_event(fallback.title, [], recent_titles_only):
                 log.info("Відкат на новину Укрнету — теж дубль, пропускаю: %r", fallback.title)
                 fallback = None
         if fallback:
             log.info("Відкат на новину Укрнету: %r", fallback.title)
             fb_ctx = prior_context_by_id.get(fallback.cluster_id, "")
-            _publish_item(state, fallback, now, dry_run, is_regular=True, prior_context=fb_ctx)
+            _publish_item(state, fallback, now, dry_run, is_regular=True, prior_context=fb_ctx,
+                          prior_url=prior_url_by_id.get(fallback.cluster_id, ""))
 
 
 def main() -> None:
