@@ -199,7 +199,9 @@ def fetch_article_meta(article_url: str) -> ArticleMeta:
     for value, key in _OG_RE_REV.findall(html):
         found.setdefault(key.lower().split(":")[0], value)
     meta.image_url = found.get("image", "")
-    meta.description = _trim_truncated_description(_unescape(found.get("description", "")))
+    meta.description = _trim_truncated_description(
+        _clean_description(_unescape(found.get("description", "")))
+    )
     meta.site_name = _unescape(found.get("site_name", ""))
 
     video = found.get("video", "")
@@ -285,6 +287,25 @@ def _unescape(text: str) -> str:
 
 _TRAILING_ELLIPSIS_RE = re.compile(r"\s*(?:\.{2,}|…)\s*$")
 _SENTENCE_END_RE = re.compile(r'[.!?]["\'»)]?(?=\s|$)')
+
+# Службовий префікс сайту на початку опису: коротка "хлібна крихта" (назва
+# видання + рубрика), відбита декоративним значком. Реальний кейс 19.08.2026:
+# unn.ua віддав "УНН Суспільство ✎ Міністри оборони та закордонних справ...",
+# і "УНН Суспільство ✎" пішло в пост як частина новини.
+# Тільки очевидно декоративні роздільники: тире й двокрапку не чіпаємо, бо
+# вони бувають у справжньому тексті ("Зеленський — про переговори: ...").
+_SITE_PREFIX_RE = re.compile(r"^[^.!?\n]{1,45}?\s*[✎✏🖊📝|▸▪►]️?\s*")
+
+
+def _clean_description(text: str) -> str:
+    """Прибирає з og:description сміття верстки сайту-джерела.
+
+    Два дефекти, знайдені на живих даних:
+    - переноси рядків усередині речення (у пості слово з'їжджало на новий
+      рядок посеред фрази: "...заради справедливого\\nмиру");
+    - службова "хлібна крихта" на початку ("УНН Суспільство ✎ ")."""
+    text = " ".join(text.split())  # будь-які пробільні послідовності -> один пробіл
+    return _SITE_PREFIX_RE.sub("", text, count=1).strip()
 
 
 def _trim_truncated_description(text: str) -> str:
