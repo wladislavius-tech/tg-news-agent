@@ -195,9 +195,8 @@ def _find_font() -> str | None:
     return None
 
 
-def _probe_aspect(path: Path) -> float | None:
-    """Співвідношення сторін джерельного відео (ширина/висота), або None
-    при збої ffprobe."""
+def _probe_dimensions(path: Path) -> tuple[int, int] | None:
+    """Реальні ширина/висота джерельного відео, або None при збої ffprobe."""
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -205,7 +204,7 @@ def _probe_aspect(path: Path) -> float | None:
             capture_output=True, text=True, timeout=15,
         )
         w, h = out.stdout.strip().split(",")
-        return int(w) / int(h)
+        return int(w), int(h)
     except Exception:  # noqa: BLE001
         return None
 
@@ -217,24 +216,36 @@ def _escape_drawtext(text: str) -> str:
                 .replace("'", r"\'").replace(",", r"\,"))
 
 
-def _wrap_two_lines(text: str, max_chars: int = 22) -> str:
-    """Розбиває вже екранований підпис на 2 рядки (вужчий, читабельніший
-    блок замість одного широкого рядка). Саме СПРАВЖНІЙ символ переносу
-    рядка (не послідовність \\n) — drawtext коректно ділить на рядки лише
-    буквальний байт 0x0A у значенні text=; символьна послідовність '\\n'
-    з'їдається парсером опису фільтра ще до drawtext (перевірено окремо)."""
+def _wrap_lines_px(text: str, font_path: str, fontsize: int, max_width: int,
+                    max_lines: int = 2) -> str:
+    """Розбиває підпис на рядки за РЕАЛЬНОЮ шириною гліфів (не кількістю
+    символів — жирний шрифт і широкі літери інакше вилазили за межі кадру,
+    особливо на вужчих джерельних відео). КОЖЕН рядок перевіряється окремо —
+    перша версія завжди робила рівно 2 рядки й запихала всі залишкові слова
+    в другий без перевірки його ширини, тож він однаково міг вилізти за межі
+    кадру; тепер перенос триває, поки рядків не набереться max_lines (зайві
+    слова понад це відкидаються — заголовок і так короткий). Саме СПРАВЖНІЙ
+    символ переносу рядка (не послідовність \\n) — drawtext ділить на рядки
+    лише за буквальним байтом 0x0A у значенні text=; символьна послідовність
+    '\\n' з'їдається парсером опису фільтра ще до drawtext (перевірено окремо)."""
+    from PIL import ImageFont
+    font = ImageFont.truetype(font_path, fontsize)
     words = text.split()
-    line1: list[str] = []
-    length = 0
+    lines: list[str] = []
+    current: list[str] = []
     for w in words:
-        if line1 and length + len(w) + 1 > max_chars:
-            break
-        line1.append(w)
-        length += len(w) + 1
-    line2 = words[len(line1):]
-    if not line2:
-        return " ".join(line1)
-    return " ".join(line1) + "\n" + " ".join(line2)
+        trial = " ".join(current + [w])
+        if current and font.getlength(trial) > max_width:
+            lines.append(" ".join(current))
+            if len(lines) >= max_lines:
+                current = []
+                break
+            current = [w]
+        else:
+            current.append(w)
+    if current and len(lines) < max_lines:
+        lines.append(" ".join(current))
+    return "\n".join(lines[:max_lines])
 
 
 def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
@@ -268,15 +279,6 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     # відео; головне відео тут позначається великою "W" (main_w).
     logo_x = f"W-{WM_MARGIN}-{text_box_w / 2:.0f}-{LOGO_SIZE / 2:.0f}"
 
-    # Коротка плашка-заголовок по центру внизу кадру (2-5 слів, суть новини),
-    # у 2 рядки — вужчий, читабельніший блок замість одного широкого рядка.
-    title_text = _wrap_two_lines(_escape_drawtext(title)[:60])
-    title_filter = (
-        f"drawtext=fontfile='{font_escaped}':text='{title_text}':fontsize=54:fontcolor=white:"
-        "line_spacing=8:box=1:boxcolor=0x0A122A@0.65:boxborderw=16:x=(w-tw)/2:y=h-th-90"
-        if title_text else ""
-    )
-
     # Мобільна стрічка Instagram масштабує/обрізає невертикальне відео під
     # весь екран (десктоп-вебу цей нюанс не стосується — там показує з
     # полями), і текст біля країв "живого" кадру може випасти з обрізаної
@@ -285,7 +287,8 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     # (найкраща якість); якщо горизонтальне/квадратне — підганяємо під 9:16
     # без полів (crop-to-fill, трохи країв кадру може обрізатись, це не
     # критично), щоб напис гарантовано лишався у видимій зоні всюди.
-    aspect = _probe_aspect(src)
+    dims = _probe_dimensions(src)
+    aspect = (dims[0] / dims[1]) if dims else None
     # Якщо ffprobe не зміг визначити пропорції (мережа/збій) — безпечніше
     # ПІДСТРАХУВАТИСЯ й кадрувати, ніж мовчки лишити ризиковане широке відео
     # як є: гірший наслідок помилкового кадрування (трохи зайвого обрізано)
@@ -295,6 +298,24 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     crop_fill = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
     base_in = f"[0:v]{crop_fill}[base];" if needs_reformat else ""
     base_ref = "[base]" if needs_reformat else "[0:v]"
+    # Фінальна ширина кадру, яку побачить drawtext: 1080, якщо кадруємо під
+    # 9:16, інакше реальна ширина джерела (якщо відома — бо саме на вузьких
+    # джерельних відео заголовок раніше вилазив за межі кадру з обох боків).
+    final_width = 1080 if needs_reformat else (dims[0] if dims else 1080)
+
+    # Коротка плашка-заголовок по центру внизу кадру (2-5 слів, суть новини),
+    # у 2 рядки — перенос за РЕАЛЬНОЮ шириною гліфів під фінальну ширину кадру.
+    TITLE_FONTSIZE = 54
+    TITLE_MARGIN = 40
+    TITLE_BOXBORDER = 16
+    max_title_w = final_width - 2 * TITLE_MARGIN - 2 * TITLE_BOXBORDER
+    wrapped_raw = _wrap_lines_px(title[:90], font, TITLE_FONTSIZE, max_title_w)
+    title_text = "\n".join(_escape_drawtext(line) for line in wrapped_raw.split("\n"))
+    title_filter = (
+        f"drawtext=fontfile='{font_escaped}':text='{title_text}':fontsize={TITLE_FONTSIZE}:fontcolor=white:"
+        f"line_spacing=8:box=1:boxcolor=0x0A122A@0.65:boxborderw={TITLE_BOXBORDER}:x=(w-tw)/2:y=h-th-90"
+        if title_text else ""
+    )
 
     if LOGO_PATH.exists():
         filter_complex = (
