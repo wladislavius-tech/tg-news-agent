@@ -653,6 +653,19 @@ def _fact_body(fact: str) -> str:
     return body or fact
 
 
+_HEADLINE_TAG_RE = re.compile(r"<b>(.*?)</b>", re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _published_headline(caption: str) -> str:
+    """Заголовок так, як його побачить читач: перший <b>...</b> готового
+    підпису, без HTML-тегів (у ньому бувають <tg-emoji> зі стікерами)."""
+    m = _HEADLINE_TAG_RE.search(caption or "")
+    if not m:
+        return ""
+    return html.unescape(_HTML_TAG_RE.sub("", m.group(1))).strip()
+
+
 _ALBUM_WORD_RE = re.compile(r"[а-яіїєґa-z0-9']{4,}", re.IGNORECASE)
 
 
@@ -710,6 +723,26 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
             state_mod.save(state)
         return False
 
+    # Дубль за ОПУБЛІКОВАНИМ заголовком. Усі попередні перевірки звіряють
+    # СИРІ заголовки джерел (item.title), а читач бачить переписаний AI
+    # текст — і AI зводить два різні формулювання до майже однакового.
+    # Реальні кейси 15-19.08.2026:
+    #   "Іспанський винищувач F-18 збив над Румунією невідомий дрон"
+    #   "Іспанський винищувач F-18 збив невідомий дрон над Румунією"  (+75 хв)
+    # Сирі заголовки цих джерел різнилися достатньо, щоб пройти дедуп.
+    # Перевіряти можна лише ТУТ: заголовок існує тільки після compose_post.
+    headline = _published_headline(caption)
+    recent_headlines = state_mod.recent_headlines(state)
+    if headline and recent_headlines and state_mod.is_near_exact_duplicate(
+        headline, recent_headlines
+    ):
+        log.info("Дубль за опублікованим заголовком — пропускаю: %r", headline)
+        state["posted_ids"].append(item.cluster_id)
+        state["posted_titles"].append(item.title)
+        if not dry_run:
+            state_mod.save(state)
+        return False
+
     # Перевірка дублів за ТІЛОМ поста (не лише заголовком): реальний кейс —
     # два пости про потоплення контейнеровоза Yanina мали ОДНАКОВЕ тіло
     # тексту (той самий опис джерела), але РІЗНІ заголовки, бо item.title
@@ -753,6 +786,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
         state, item.cluster_id, item.title, now,
         image_url=img_url, is_video=is_video, is_regular=is_regular,
         is_viral=item.is_viral, message_id=message_id, fact=fact,
+        headline=headline,
     )
     if not dry_run:
         state_mod.save(state)

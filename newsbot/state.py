@@ -90,6 +90,13 @@ def recent_titles(state: dict, limit: int = 70, tail: int = 30) -> list[str]:
     return out[-limit:]
 
 
+def recent_headlines(state: dict, limit: int = 70) -> list[str]:
+    """Останні ОПУБЛІКОВАНІ заголовки — для перевірки, чи новий пост не
+    виглядатиме для читача копією вже наявного (див. main._publish_item).
+    На відміну від posted_titles тут не сирий текст джерела, а фінальний."""
+    return state.get("posted_headlines", [])[-limit:]
+
+
 def recent_facts(state: dict, limit: int = 70, tail: int = 30) -> list[str]:
     """Тексти постів (без HTML/футера, див. main._plain_fact) за сьогодні +
     "хвіст" учорашніх — та сама логіка, що recent_titles(), але для ТІЛА
@@ -268,9 +275,17 @@ def remember_post(
     state: dict, cluster_id: str, title: str, now: datetime,
     image_url: str = "", is_video: bool = False, is_regular: bool = False,
     is_viral: bool = False, message_id: int | None = None, fact: str = "",
+    headline: str = "",
 ) -> None:
     state["posted_ids"].append(cluster_id)
     state["posted_titles"].append(title)
+    # ОПУБЛІКОВАНИЙ заголовок (те, що бачить читач) — окремо від сирого
+    # title джерела: AI зводить різні формулювання джерел до майже
+    # однакового тексту, і саме за ним читач упізнає дубль.
+    if headline:
+        heads = state.setdefault("posted_headlines", [])
+        heads.append(headline)
+        state["posted_headlines"] = heads[-config.MAX_REMEMBERED_TITLES:]
     if fact:
         state["posted_facts"].append(fact)
         state["posted_facts"] = state["posted_facts"][-config.MAX_REMEMBERED_TITLES:]
