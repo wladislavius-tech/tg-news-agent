@@ -240,25 +240,30 @@ def build_post(
         return metas[i]
 
     meta = src_meta(0) if sources else ukrnet.ArticleMeta()
-    # Перше джерело інколи кладе в og:description не новину, а заклик
-    # ("Подробиці читайте на сайті"). Без AI цей текст іде в пост дослівно й
-    # виглядає безглуздо: посилання в пості немає, тож "сайт" невідомий.
-    # Реальний кейс 15.08.2026 (спецоперація НАБУ): у джерела №1 була така
-    # заглушка, а в наступних — нормальні описи з іменами й фактами.
-    # Беремо ОПИС із першого придатного джерела; тема підпису лишається за
-    # sources[0], тож звіряємо спорідненість, щоб не підмішати інший інцидент.
-    if sources and ukrnet.is_stub_description(meta.description):
-        for i in range(1, min(len(sources), config.SOURCE_FETCH_MAX)):
+    # ОПИС беремо не з першого джерела, а з НАЙКРАЩОГО серед кількох.
+    # Історія фіксів показала, що "перше" регулярно виявляється найгіршим:
+    # 15.08 у джерела №1 стояла заглушка "Подробиці читайте на сайті", а в
+    # сусідніх — імена й факти; 19.08 unn.ua віддав опис із версткою
+    # ("УНН Суспільство ✎ ..."), тоді як socportal мав чистий абзац.
+    # ukrnet.description_quality оцінює довжину, наявність цифр і власних
+    # назв, завершеність речення й відсіює заглушки та російський текст.
+    # Тема підпису лишається за sources[0], тож звіряємо спорідненість —
+    # інакше можна підмішати опис іншого інциденту того ж дня.
+    if sources:
+        best_i, best_score = 0, ukrnet.description_quality(meta.description)
+        for i in range(1, min(len(sources), config.DESCRIPTION_SOURCE_TRIES)):
             if not _topically_related(sources[0].title, sources[i].title):
                 continue
-            alt = src_meta(i)
-            if not ukrnet.is_stub_description(alt.description):
-                log.info(
-                    "Опис джерела %s — заглушка, беру опис із %s",
-                    sources[0].domain, sources[i].domain,
-                )
-                meta.description = alt.description
-                break
+            score = ukrnet.description_quality(src_meta(i).description)
+            if score > best_score:
+                best_i, best_score = i, score
+        if best_i:
+            log.info(
+                "Опис узято з %s (оцінка %d) замість %s (%d)",
+                sources[best_i].domain, best_score,
+                sources[0].domain, ukrnet.description_quality(meta.description),
+            )
+            meta.description = src_meta(best_i).description
 
     # 1) Пряме коротке відео: шукаємо у кількох джерелах кластера
     for i in range(min(len(sources), config.VIDEO_SOURCE_TRIES)):
