@@ -14,6 +14,7 @@ import requests
 
 from . import config, stickers
 from .ukrnet import ArticleMeta, FeedItem, SourceArticle
+from .ukrnet import is_stub_description as ukrnet_is_stub
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,25 @@ def _is_russian_text(text: str) -> bool:
     return cyr >= 60 and not _UK_ONLY_RE.search(text)
 
 
+# Власна назва = слово з великої літери НЕ на початку речення (щоб не ловити
+# звичайне перше слово), абревіатура, або число з трьох і більше символів.
+_PROPER_NOUN_RE = re.compile(
+    r"\b([А-ЯІЇЄҐA-Z][а-яіїєґa-z']{2,}|[А-ЯІЇЄҐA-Z]{2,})\b"
+)
+_BIG_NUMBER_RE = re.compile(r"\b\d[\d\s]{2,}\b")
+
+
+def _named_entities(text: str) -> set[str]:
+    """Власні назви й числа — маркери КОНКРЕТНОЇ нової інформації."""
+    out: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        words = _PROPER_NOUN_RE.findall(sentence)
+        out |= {w.lower() for w in words[1:]} if words else set()
+        # words[0] пропускаємо: перше слово речення з великої завжди
+    out |= {m.group().strip() for m in _BIG_NUMBER_RE.finditer(text)}
+    return out
+
+
 def _is_redundant_paragraph(headline: str, paragraph: str) -> bool:
     """Чи єдиний абзац тіла просто переказує headline іншими словами, без
     нової інформації — інструкція в промпті це не завжди зупиняє (особливо
@@ -80,7 +100,17 @@ def _is_redundant_paragraph(headline: str, paragraph: str) -> bool:
     p_words = {w.lower() for w in _SIG_WORD_RE.findall(paragraph)}
     if not h_words or not p_words:
         return False
-    return len(h_words & p_words) / len(h_words) >= 0.6
+    if len(h_words & p_words) / len(h_words) < 0.6:
+        return False
+    # Саме лише покриття слів заголовка — НЕ ознака переказу: тіло може
+    # повторити заголовок і водночас додати нові факти. Реальний кейс
+    # 15.08.2026: під заголовком про спецоперацію НАБУ тіло згадувало
+    # Sense Bank і Галущенка (7 нових слів, покриття 0.71) — і його
+    # прибирало як "дублювання", лишаючи голий заголовок.
+    # Розрізняє саме тип нових слів: переказ додає загальні ("російських
+    # окупаційних військ"), доповнення — ВЛАСНІ НАЗВИ й числа.
+    new_entities = _named_entities(paragraph) - _named_entities(headline)
+    return len(new_entities) < 2
 
 
 _HEADLINE_ATTR_RE = re.compile(r",\s*—\s*(.+?)\s*$")
@@ -259,6 +289,12 @@ def compose_post(
         # Краще пост із самим заголовком, ніж російський текст у каналі.
         if body and _is_russian_text(body):
             log.info("Тіло поста російською — публікую лише заголовок: %r", item.title[:60])
+            body = ""
+        # Остання лінія: якщо ЖОДНЕ джерело кластера не дало нормального опису
+        # (main.build_post уже пробував підмінити), краще самий заголовок, ніж
+        # "Подробиці читайте на сайті" — читач однаково не знає, на якому.
+        if body and ukrnet_is_stub(body):
+            log.info("Опис-заглушка, публікую лише заголовок: %r", item.title[:60])
             body = ""
 
     body_html = _md_bold_to_html(body) if body else ""

@@ -238,6 +238,25 @@ def build_post(
         return metas[i]
 
     meta = src_meta(0) if sources else ukrnet.ArticleMeta()
+    # Перше джерело інколи кладе в og:description не новину, а заклик
+    # ("Подробиці читайте на сайті"). Без AI цей текст іде в пост дослівно й
+    # виглядає безглуздо: посилання в пості немає, тож "сайт" невідомий.
+    # Реальний кейс 15.08.2026 (спецоперація НАБУ): у джерела №1 була така
+    # заглушка, а в наступних — нормальні описи з іменами й фактами.
+    # Беремо ОПИС із першого придатного джерела; тема підпису лишається за
+    # sources[0], тож звіряємо спорідненість, щоб не підмішати інший інцидент.
+    if sources and ukrnet.is_stub_description(meta.description):
+        for i in range(1, min(len(sources), config.SOURCE_FETCH_MAX)):
+            if not _topically_related(sources[0].title, sources[i].title):
+                continue
+            alt = src_meta(i)
+            if not ukrnet.is_stub_description(alt.description):
+                log.info(
+                    "Опис джерела %s — заглушка, беру опис із %s",
+                    sources[0].domain, sources[i].domain,
+                )
+                meta.description = alt.description
+                break
 
     # 1) Пряме коротке відео: шукаємо у кількох джерелах кластера
     for i in range(min(len(sources), config.VIDEO_SOURCE_TRIES)):
