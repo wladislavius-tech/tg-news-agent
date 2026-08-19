@@ -1,67 +1,10 @@
 {
  "tg_offset": 732686888,
  "tg_bot_id": 8466428396,
- "tg_reactions": {
-  "2863": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2864": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2865": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2866": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2867": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "2869": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2873": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2874": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2878": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "2887": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2892": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "2899": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "2900": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "2901": {
-   "total": 1,
-   "top_emoji": "⚡"
-  }
- },
- "tg_joined": 35,
- "tg_left": 4,
- "last_report_date": "2026-08-18",
+ "tg_reactions": {},
+ "tg_joined": 0,
+ "tg_left": 0,
+ "last_report_date": "2026-08-19",
  "history": [
   {
    "date": "2026-08-02",
@@ -1111,6 +1054,64 @@
      "posts": 2,
      "engagement": 7,
      "views": 306
+    }
+   }
+  },
+  {
+   "date": "2026-08-19",
+   "tg_subscribers": 486,
+   "tg_joined": 35,
+   "tg_left": 4,
+   "tg_net": 31,
+   "tg_posts": 17,
+   "tg_views": 111,
+   "tg_reactions": 0,
+   "tg_by_category": {
+    "other": {
+     "posts": 9,
+     "engagement": 0,
+     "views": 61
+    },
+    "casualty": {
+     "posts": 3,
+     "engagement": 0,
+     "views": 20
+    },
+    "scandal": {
+     "posts": 5,
+     "engagement": 0,
+     "views": 30
+    }
+   },
+   "threads_followers": 112,
+   "threads_views": 10341,
+   "threads_likes": 322,
+   "threads_posts": 25,
+   "threads_by_category": {
+    "scandal": {
+     "posts": 5,
+     "engagement": 21,
+     "views": 1395
+    },
+    "other": {
+     "posts": 13,
+     "engagement": 87,
+     "views": 5313
+    },
+    "casualty": {
+     "posts": 4,
+     "engagement": 208,
+     "views": 2566
+    },
+    "strike": {
+     "posts": 2,
+     "engagement": 3,
+     "views": 444
+    },
+    "world": {
+     "posts": 1,
+     "engagement": 0,
+     "views": 5
     }
    }
   }
