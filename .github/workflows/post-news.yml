@@ -189,8 +189,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests beautifulsoup4 Pillow
-      - name: Перевірити наявність ffmpeg
-        run: which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Перевірити наявність ffmpeg і tesseract (OCR)
+        run: |
+          which ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          which tesseract || (sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-ukr)
       - name: Відновити стан Instagram-кросспосту
         uses: actions/cache/restore@v4
         with:

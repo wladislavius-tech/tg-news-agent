@@ -209,6 +209,35 @@ def _probe_dimensions(path: Path) -> tuple[int, int] | None:
         return None
 
 
+def _has_burned_text(path: Path) -> bool:
+    """Чи вже є на джерельному відео власний вбудований текст/підпис (типово
+    в конкурентів — дата, локація, назва каналу тощо в нижній третині кадру,
+    саме там, де ми б поклали свій заголовок). Якщо є — накладати ще й наш
+    текст поверх не варто, вийде каша з двох написів. Кадр із середини
+    ролика (не перший — там частіше "чорний" вступ), обрізаний до нижніх
+    40% висоти, розпізнається через tesseract; точність розпізнавання не
+    важлива, лише сам факт наявності помітного тексту (поріг у символах)."""
+    try:
+        frame_path = path.with_suffix(".ocr.png")
+        subprocess.run(
+            ["ffmpeg", "-y", "-ss", "1.5", "-i", str(path), "-frames:v", "1",
+             "-vf", "crop=iw:ih*0.4:0:ih*0.6", str(frame_path)],
+            capture_output=True, text=True, timeout=20,
+        )
+        if not frame_path.exists():
+            return False
+        out = subprocess.run(
+            ["tesseract", str(frame_path), "stdout", "-l", "ukr+eng"],
+            capture_output=True, text=True, timeout=20,
+        )
+        frame_path.unlink(missing_ok=True)
+        alnum = "".join(ch for ch in out.stdout if ch.isalnum())
+        return len(alnum) >= 8
+    except Exception as e:  # noqa: BLE001 — збій OCR не має валити публікацію
+        print(f"[!] OCR-перевірка тексту на відео: {e}")
+        return False
+
+
 def _escape_drawtext(text: str) -> str:
     """Екранування для значення drawtext: кома розриває ланцюжок фільтрів,
     двокрапка/апостроф/бекслеш конфліктують із синтаксисом самого фільтра."""
@@ -305,17 +334,25 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
 
     # Коротка плашка-заголовок по центру внизу кадру (2-5 слів, суть новини),
     # у 2 рядки — перенос за РЕАЛЬНОЮ шириною гліфів під фінальну ширину кадру.
-    TITLE_FONTSIZE = 54
-    TITLE_MARGIN = 40
-    TITLE_BOXBORDER = 16
-    max_title_w = final_width - 2 * TITLE_MARGIN - 2 * TITLE_BOXBORDER
-    wrapped_raw = _wrap_lines_px(title[:90], font, TITLE_FONTSIZE, max_title_w)
-    title_text = "\n".join(_escape_drawtext(line) for line in wrapped_raw.split("\n"))
-    title_filter = (
-        f"drawtext=fontfile='{font_escaped}':text='{title_text}':fontsize={TITLE_FONTSIZE}:fontcolor=white:"
-        f"line_spacing=8:box=1:boxcolor=0x0A122A@0.65:boxborderw={TITLE_BOXBORDER}:x=(w-tw)/2:y=h-th-90"
-        if title_text else ""
-    )
+    # АЛЕ якщо на самому відео вже є вбудований текст (типово в конкурентів —
+    # дата/локація в нижній третині кадру) — наш заголовок туди НЕ кладемо,
+    # щоб не робити кашу з двох накладених написів; лишається тільки
+    # оригінальний текст джерела.
+    title_filter = ""
+    if title and not _has_burned_text(src):
+        TITLE_FONTSIZE = 54
+        TITLE_MARGIN = 40
+        TITLE_BOXBORDER = 16
+        max_title_w = final_width - 2 * TITLE_MARGIN - 2 * TITLE_BOXBORDER
+        wrapped_raw = _wrap_lines_px(title[:90], font, TITLE_FONTSIZE, max_title_w)
+        title_text = "\n".join(_escape_drawtext(line) for line in wrapped_raw.split("\n"))
+        if title_text:
+            title_filter = (
+                f"drawtext=fontfile='{font_escaped}':text='{title_text}':fontsize={TITLE_FONTSIZE}:fontcolor=white:"
+                f"line_spacing=8:box=1:boxcolor=0x0A122A@0.65:boxborderw={TITLE_BOXBORDER}:x=(w-tw)/2:y=h-th-90"
+            )
+    else:
+        print("  [на відео вже є вбудований текст — не накладаємо власний заголовок]")
 
     if LOGO_PATH.exists():
         filter_complex = (
