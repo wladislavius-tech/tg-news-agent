@@ -28,8 +28,6 @@ _PEOPLE = [
     (re.compile(r"решетилов", re.IGNORECASE), "reshetylova"),
     (re.compile(r"трамп", re.IGNORECASE), "trump"),
 ]
-_TCK_RE = re.compile(r"\bтцк\b|територіальн\w*\s+центр\w*\s+комплектуванн", re.IGNORECASE)
-
 # Новини-ПОДІЇ (прибуття, поїздки, заплановані зустрічі) — портрет-цитата тут
 # вводить в оману: це не пряма мова людини, а подія за її участі. Список не
 # претендує на повноту (евристика на дієсловах), але покриває найчастіші
@@ -82,22 +80,15 @@ def pick_photo(
     return chosen.read_bytes(), (person, chosen.name)
 
 
-def pick_institution_card(text: str, now: datetime) -> bytes | None:
-    """Згенерована картка-плашка установи (напр. ТЦК), або None."""
-    if _TCK_RE.search(text):
-        from . import cover
-
-        return cover.make_institution_card("ТЦК", now)
-    return None
-
-
 def pick(
     text: str, now: datetime, last_used: dict[str, str] | None = None
 ) -> tuple[bytes | None, tuple[str, str] | None]:
-    """Фото персони (з ротацією), або картка установи, або (None, None) —
-    у цьому пріоритеті. Другий елемент пари — інфо для ротації (person_key,
-    filename), заповнений лише коли повернуто фото персони."""
-    photo, chosen = pick_photo(text, last_used)
-    if photo:
-        return photo, chosen
-    return pick_institution_card(text, now), None
+    """Фото відомої персони (з ротацією) або (None, None). Другий елемент
+    пари — інфо для ротації (person_key, filename).
+
+    Раніше тут була ще згенерована картка-плашка установи (єдина — "ТЦК").
+    Прибрано 15.08.2026 на прохання власника: намальований прямокутник з
+    написом замість фото виглядав бідно й нічого не додавав до новини.
+    Тепер, коли фото персони немає, далі йде лого видання-джерела
+    (source_logos.pick), а якщо і його немає — пост виходить текстом."""
+    return pick_photo(text, last_used)
