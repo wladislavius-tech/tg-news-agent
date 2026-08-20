@@ -704,11 +704,7 @@
   }
  },
  "last_regular_post_at": "2026-08-20T13:05:30.668227+03:00",
- "active_alert": {
-  "message_id": 3005,
-  "posted_at": "2026-08-20T09:10:35.664105+03:00",
-  "caption": "<b>❗️Загроза БПЛА у Києві</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-08-20",
  "cash_rates": {
   "date": "2026-08-20",
