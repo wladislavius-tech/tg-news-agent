@@ -610,11 +610,7 @@
   }
  },
  "last_regular_post_at": "2026-08-25T00:47:41.224415+03:00",
- "active_alert": {
-  "message_id": 3388,
-  "posted_at": "2026-08-24T21:25:36.232015+03:00",
-  "caption": "<b><tg-emoji emoji-id=\"5415701443812303271\">🚀</tg-emoji> ❗️ Повітряна загроза у Києві та низці областей</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-08-24",
  "cash_rates": {
   "date": "2026-08-24",
