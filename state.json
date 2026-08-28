@@ -676,11 +676,7 @@
   }
  },
  "last_regular_post_at": "2026-08-28T12:00:54.113297+03:00",
- "active_alert": {
-  "message_id": 3642,
-  "posted_at": "2026-08-28T08:05:26.875009+03:00",
-  "caption": "<b>❗️ Повітряна тривога</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-08-28",
  "cash_rates": {
   "date": "2026-08-28",
