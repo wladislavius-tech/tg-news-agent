@@ -143,38 +143,6 @@ def build_caption(post: dict) -> str:
     return f"{body}\n\n{TAGS}{extra_tag}\n\n🔗 Джерело: {link}"[:2200]
 
 
-_EMOJI_RE = re.compile(
-    "["
-    "\U0001F300-\U0001FAFF"
-    "\U00002600-\U000027BF"
-    "\U0001F1E6-\U0001F1FF"
-    "\U00002B00-\U00002BFF"
-    "\U0000FE0F"
-    "\U0000200D"
-    "]+",
-    flags=re.UNICODE,
-)
-
-
-def _strip_emoji(text: str) -> str:
-    return " ".join(_EMOJI_RE.sub(" ", text).split())
-
-
-def headline(text: str, max_chars: int = 45) -> str:
-    """Коротка плашка-заголовок унизу кадру (орієнтовно 2-5 слів) — не підпис
-    під відео (той повний, у build_caption), а візуальний акцент на суть
-    новини. Ріжемо по природній межі (коми чи кінця фрази), а не за жорсткою
-    кількістю слів — інакше речення обривається на прийменнику."""
-    t = _strip_emoji(text)
-    t = re.split(r"\s+—\s+", t, maxsplit=1)[0]  # відкидаємо "— Джерело" в кінці
-    t = t.split(",")[0].strip()
-    if len(t) <= max_chars:
-        return t
-    cut = t[:max_chars]
-    if " " in cut:
-        cut = cut.rsplit(" ", 1)[0]
-    return cut.rstrip(".,:;—-")
-
 
 # --- Водяний знак (ffmpeg drawtext) -----------------------------------------
 
@@ -209,35 +177,6 @@ def _probe_dimensions(path: Path) -> tuple[int, int] | None:
         return None
 
 
-def _has_burned_text(path: Path) -> bool:
-    """Чи вже є на джерельному відео власний вбудований текст/підпис (типово
-    в конкурентів — дата, локація, назва каналу тощо в нижній третині кадру,
-    саме там, де ми б поклали свій заголовок). Якщо є — накладати ще й наш
-    текст поверх не варто, вийде каша з двох написів. Кадр із середини
-    ролика (не перший — там частіше "чорний" вступ), обрізаний до нижніх
-    40% висоти, розпізнається через tesseract; точність розпізнавання не
-    важлива, лише сам факт наявності помітного тексту (поріг у символах)."""
-    try:
-        frame_path = path.with_suffix(".ocr.png")
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", "1.5", "-i", str(path), "-frames:v", "1",
-             "-vf", "crop=iw:ih*0.4:0:ih*0.6", str(frame_path)],
-            capture_output=True, text=True, timeout=20,
-        )
-        if not frame_path.exists():
-            return False
-        out = subprocess.run(
-            ["tesseract", str(frame_path), "stdout", "-l", "ukr+eng"],
-            capture_output=True, text=True, timeout=20,
-        )
-        frame_path.unlink(missing_ok=True)
-        alnum = "".join(ch for ch in out.stdout if ch.isalnum())
-        return len(alnum) >= 8
-    except Exception as e:  # noqa: BLE001 — збій OCR не має валити публікацію
-        print(f"[!] OCR-перевірка тексту на відео: {e}")
-        return False
-
-
 def _escape_drawtext(text: str) -> str:
     """Екранування для значення drawtext: кома розриває ланцюжок фільтрів,
     двокрапка/апостроф/бекслеш конфліктують із синтаксисом самого фільтра."""
@@ -245,44 +184,15 @@ def _escape_drawtext(text: str) -> str:
                 .replace("'", r"\'").replace(",", r"\,"))
 
 
-def _wrap_lines_px(text: str, font_path: str, fontsize: int, max_width: int,
-                    max_lines: int = 2) -> str:
-    """Розбиває підпис на рядки за РЕАЛЬНОЮ шириною гліфів (не кількістю
-    символів — жирний шрифт і широкі літери інакше вилазили за межі кадру,
-    особливо на вужчих джерельних відео). КОЖЕН рядок перевіряється окремо —
-    перша версія завжди робила рівно 2 рядки й запихала всі залишкові слова
-    в другий без перевірки його ширини, тож він однаково міг вилізти за межі
-    кадру; тепер перенос триває, поки рядків не набереться max_lines (зайві
-    слова понад це відкидаються — заголовок і так короткий). Саме СПРАВЖНІЙ
-    символ переносу рядка (не послідовність \\n) — drawtext ділить на рядки
-    лише за буквальним байтом 0x0A у значенні text=; символьна послідовність
-    '\\n' з'їдається парсером опису фільтра ще до drawtext (перевірено окремо)."""
-    from PIL import ImageFont
-    font = ImageFont.truetype(font_path, fontsize)
-    words = text.split()
-    lines: list[str] = []
-    current: list[str] = []
-    for w in words:
-        trial = " ".join(current + [w])
-        if current and font.getlength(trial) > max_width:
-            lines.append(" ".join(current))
-            if len(lines) >= max_lines:
-                current = []
-                break
-            current = [w]
-        else:
-            current.append(w)
-    if current and len(lines) < max_lines:
-        lines.append(" ".join(current))
-    return "\n".join(lines[:max_lines])
-
-
-def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
+def add_watermark(src: Path, dst: Path) -> bool:
     """Водяний знак у правому верхньому куті: напівпрозорий логотип каналу
-    (assets/logo.png, з альфою) над написом-посиланням, і коротка (2-5 слів)
-    плашка-заголовок по центру внизу кадру. Повертає False (без винятку),
-    якщо ffmpeg не впорався — тоді постимо оригінал без нього, оскільки
-    водяний знак другорядний, а публікація реального відео — головне."""
+    (assets/logo.png, з альфою) над написом-посиланням. Жодного тексту з
+    заголовка новини на кадр не кладемо — за проханням користувача (це
+    неодноразово спричиняло проблеми: обрізання, накладання на вже
+    вбудований у джерельне відео текст конкурентів). Повертає False (без
+    винятку), якщо ffmpeg не впорався — тоді постимо оригінал без нього,
+    оскільки водяний знак другорядний, а публікація реального відео —
+    головне."""
     font = _find_font()
     if not font:
         return False
@@ -327,42 +237,16 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     crop_fill = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
     base_in = f"[0:v]{crop_fill}[base];" if needs_reformat else ""
     base_ref = "[base]" if needs_reformat else "[0:v]"
-    # Фінальна ширина кадру, яку побачить drawtext: 1080, якщо кадруємо під
-    # 9:16, інакше реальна ширина джерела (якщо відома — бо саме на вузьких
-    # джерельних відео заголовок раніше вилазив за межі кадру з обох боків).
-    final_width = 1080 if needs_reformat else (dims[0] if dims else 1080)
 
-    # Коротка плашка-заголовок по центру внизу кадру (2-5 слів, суть новини),
-    # у 2 рядки — перенос за РЕАЛЬНОЮ шириною гліфів під фінальну ширину кадру.
-    # АЛЕ якщо на самому відео вже є вбудований текст (типово в конкурентів —
-    # дата/локація в нижній третині кадру) — наш заголовок туди НЕ кладемо,
-    # щоб не робити кашу з двох накладених написів; лишається тільки
-    # оригінальний текст джерела.
-    title_filter = ""
-    if title and not _has_burned_text(src):
-        TITLE_FONTSIZE = 54
-        TITLE_MARGIN = 40
-        TITLE_BOXBORDER = 16
-        max_title_w = final_width - 2 * TITLE_MARGIN - 2 * TITLE_BOXBORDER
-        wrapped_raw = _wrap_lines_px(title[:90], font, TITLE_FONTSIZE, max_title_w)
-        title_text = "\n".join(_escape_drawtext(line) for line in wrapped_raw.split("\n"))
-        if title_text:
-            title_filter = (
-                f"drawtext=fontfile='{font_escaped}':text='{title_text}':fontsize={TITLE_FONTSIZE}:fontcolor=white:"
-                f"line_spacing=8:box=1:boxcolor=0x0A122A@0.65:boxborderw={TITLE_BOXBORDER}:x=(w-tw)/2:y=h-th-90"
-            )
-    else:
-        print("  [на відео вже є вбудований текст — не накладаємо власний заголовок]")
-
+    label_escaped = _escape_drawtext(label)
     if LOGO_PATH.exists():
         filter_complex = (
             f"{base_in}"
             f"[1:v]scale={LOGO_SIZE}:{LOGO_SIZE}[logo];"
             f"{base_ref}[logo]overlay={logo_x}:{WM_MARGIN}[wm];"
-            f"[wm]drawtext=fontfile='{font_escaped}':text='{label}':fontsize=30:fontcolor=white:"
-            f"box=1:boxcolor=0x0A122A@0.6:boxborderw=8:x=w-tw-{WM_MARGIN}:y={text_y}[wm2]"
+            f"[wm]drawtext=fontfile='{font_escaped}':text='{label_escaped}':fontsize=30:fontcolor=white:"
+            f"box=1:boxcolor=0x0A122A@0.6:boxborderw=8:x=w-tw-{WM_MARGIN}:y={text_y}[out]"
         )
-        filter_complex += f";[wm2]{title_filter}[out]" if title_filter else ";[wm2]copy[out]"
         cmd = [
             "ffmpeg", "-y", "-i", str(src), "-i", str(LOGO_PATH),
             "-filter_complex", filter_complex, "-map", "[out]", "-map", "0:a?",
@@ -373,10 +257,9 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     else:
         filter_complex = (
             f"{base_in}"
-            f"{base_ref}drawtext=fontfile='{font_escaped}':text='{label}':fontsize=26:fontcolor=white:"
-            f"box=1:boxcolor=0x0A122A@0.6:boxborderw=10:x=w-tw-20:y=30[wm2]"
+            f"{base_ref}drawtext=fontfile='{font_escaped}':text='{label_escaped}':fontsize=26:fontcolor=white:"
+            f"box=1:boxcolor=0x0A122A@0.6:boxborderw=10:x=w-tw-20:y=30[out]"
         )
-        filter_complex += f";[wm2]{title_filter}[out]" if title_filter else ";[wm2]copy[out]"
         cmd = [
             "ffmpeg", "-y", "-i", str(src),
             "-filter_complex", filter_complex, "-map", "[out]", "-map", "0:a?",
@@ -390,7 +273,7 @@ def add_watermark(src: Path, dst: Path, title: str = "") -> bool:
     return result.returncode == 0 and dst.exists()
 
 
-def prepare_video(video_url: str, post_id: int, post_text: str, tmpdir: Path) -> Path | None:
+def prepare_video(video_url: str, post_id: int, tmpdir: Path) -> Path | None:
     """Завантажує оригінальне відео поста, накладає водяний знак (якщо вдасться)
     і повертає шлях до фінального файлу, готового для заливки в GitHub Release."""
     src = tmpdir / f"src_{post_id}.mp4"
@@ -403,7 +286,7 @@ def prepare_video(video_url: str, post_id: int, post_text: str, tmpdir: Path) ->
         return None
 
     watermarked = tmpdir / f"ig_{post_id}.mp4"
-    if add_watermark(src, watermarked, title=headline(post_text)):
+    if add_watermark(src, watermarked):
         return watermarked
     print("  [watermark не накладено — постимо оригінал]")
     final = tmpdir / f"ig_{post_id}_plain.mp4"
@@ -508,7 +391,7 @@ def post_instagram_video(token: str, video_url: str, caption: str) -> str | None
 
 def publish_post(token: str, post: dict) -> bool:
     with tempfile.TemporaryDirectory() as td:
-        video_path = prepare_video(post["video"], post["id"], post["text"], Path(td))
+        video_path = prepare_video(post["video"], post["id"], Path(td))
         if not video_path:
             return False
         video_url = upload_release_asset(video_path)
