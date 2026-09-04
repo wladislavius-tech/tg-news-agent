@@ -657,11 +657,7 @@
   }
  },
  "last_regular_post_at": "2026-09-04T09:30:55.645020+03:00",
- "active_alert": {
-  "message_id": 4202,
-  "posted_at": "2026-09-04T05:30:59.194435+03:00",
-  "caption": "<b>❗️ Загроза БпЛА у Києві</b>\n\nО 5:07 у столиці оголошено відбій загрози. Джерело: Оперативний Монітор.\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-09-04",
  "cash_rates": {
   "date": "2026-09-04",
