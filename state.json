@@ -755,11 +755,7 @@
   }
  },
  "last_regular_post_at": "2026-09-06T21:01:04.301198+03:00",
- "active_alert": {
-  "message_id": 4386,
-  "posted_at": "2026-09-06T17:35:36.581146+03:00",
-  "caption": "<b>❗️По всій Україні немає повідомлень про повітряну загрозу</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-09-06",
  "cash_rates": {
   "date": "2026-09-06",
