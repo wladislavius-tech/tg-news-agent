@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -77,6 +78,23 @@ def fetch_posts() -> list[dict]:
 
 # Теги для пошуку на Threads (для ранжування ваги не мають, лише дискавер)
 TAGS = "\n\n#новини #Україна #війна"
+
+# Лінк-відповідь на канал (2026-09-07): раніше йшла ІДЕНТИЧНИМ текстом на
+# 100% постів одразу після публікації — підозра на шейдоубан 05.09.2026
+# (переглядy впали 19к → 300 за ніч, без жодних змін коду/частоти постингу
+# перед цим) саме через цей механічний, стовідсотково однаковий патерн
+# "автопост → миттєвий лінк-реплай на зовнішній домен". Лінк лишаємо
+# (корисний читачам), але прибираємо шаблонність: різне формулювання,
+# випадковий пропуск частини постів, джитер-затримка замість миттєвої
+# публікації.
+REPLY_TEMPLATES = (
+    "🔗 Повна стрічка новин: {url}",
+    "📡 Більше новин у каналі: {url}",
+    "🗞️ Слідкуй за стрічкою новин: {url}",
+    "📰 Усі новини тут: {url}",
+    "👉 Читай більше: {url}",
+)
+REPLY_SKIP_PROBABILITY = 0.3  # ~30% постів — без лінк-відповіді взагалі
 # Префікси постів, які НЕ постимо на Threads (контент для підписників, не для стрічки).
 # "❗" — термінові алерти повітряної тривоги (compose_alert у newsbot/llm.py,
 # більше ніде в кодовій базі не використовується) — на прохання користувача
@@ -378,7 +396,8 @@ def _publish(token: str, retries: int = 5, delay: int = 5, **fields) -> str | No
 def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | None = None,
                   video_url: str | None = None) -> bool:
     """Головний пост — БЕЗ зовнішнього посилання (лінк у тексті вбиває охоплення).
-    Посилання на канал додаємо окремою відповіддю-коментарем.
+    Посилання на канал додаємо окремою відповіддю-коментарем — не на кожному
+    пості й з варіативним формулюванням/затримкою (REPLY_TEMPLATES).
     Якщо в оригінальному пості є відео/фото — постимо як VIDEO/IMAGE (медіа
     стабільно підвищує залучення в стрічці Threads); якщо публікація з медіа
     не вдалась — фолбек на TEXT."""
@@ -396,12 +415,17 @@ def post_threads(token: str, body: str, extra_tag: str = "", image_url: str | No
             post_id = _publish(token, media_type="TEXT", text=caption)
         if not post_id:
             return False
-        # Лінк — у відповідь (best-effort): зберігає охоплення головного поста
-        try:
-            _publish(token, media_type="TEXT", reply_to_id=post_id,
-                     text=f"🔗 Повна стрічка новин: {CHANNEL_URL}")
-        except requests.RequestException:
-            pass
+        # Лінк — у відповідь (best-effort): зберігає охоплення головного поста.
+        # Не на кожному пості й не миттєво — щоб не виглядати механічним
+        # ботом-паттерном (див. коментар біля REPLY_TEMPLATES вище).
+        if random.random() >= REPLY_SKIP_PROBABILITY:
+            try:
+                time.sleep(random.uniform(4, 25))
+                template = random.choice(REPLY_TEMPLATES)
+                _publish(token, media_type="TEXT", reply_to_id=post_id,
+                         text=template.format(url=CHANNEL_URL))
+            except requests.RequestException:
+                pass
         return True
     except requests.RequestException as e:
         print(f"[!] Threads: {e}")
