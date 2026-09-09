@@ -3,8 +3,8 @@
  "tg_bot_id": 8466428396,
  "tg_reactions": {},
  "tg_joined": 0,
- "tg_left": 1,
- "last_report_date": "2026-09-08",
+ "tg_left": 0,
+ "last_report_date": "2026-09-09",
  "history": [
   {
    "date": "2026-08-02",
@@ -2385,6 +2385,38 @@
    },
    "threads_followers": 167,
    "threads_views": 191,
+   "threads_likes": 0,
+   "threads_posts": 0,
+   "threads_by_category": {}
+  },
+  {
+   "date": "2026-09-09",
+   "tg_subscribers": 386,
+   "tg_joined": 0,
+   "tg_left": 1,
+   "tg_net": -1,
+   "tg_posts": 15,
+   "tg_views": 47,
+   "tg_reactions": 0,
+   "tg_by_category": {
+    "casualty": {
+     "posts": 9,
+     "engagement": 0,
+     "views": 30
+    },
+    "other": {
+     "posts": 4,
+     "engagement": 0,
+     "views": 13
+    },
+    "world": {
+     "posts": 2,
+     "engagement": 0,
+     "views": 4
+    }
+   },
+   "threads_followers": 166,
+   "threads_views": 38,
    "threads_likes": 0,
    "threads_posts": 0,
    "threads_by_category": {}
