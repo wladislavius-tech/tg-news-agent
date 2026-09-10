@@ -616,11 +616,7 @@
   }
  },
  "last_regular_post_at": "2026-09-10T02:35:36.379961+03:00",
- "active_alert": {
-  "message_id": 4686,
-  "posted_at": "2026-09-09T23:25:34.516388+03:00",
-  "caption": "<b><tg-emoji emoji-id=\"5415701443812303271\">🚀</tg-emoji> ❗️Балістична загроза по всій Україні</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-09-09",
  "cash_rates": {
   "date": "2026-09-09",
