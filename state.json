@@ -743,11 +743,7 @@
   }
  },
  "last_regular_post_at": "2026-09-10T15:50:41.380821+03:00",
- "active_alert": {
-  "message_id": 4724,
-  "posted_at": "2026-09-10T11:50:42.440169+03:00",
-  "caption": "<b><tg-emoji emoji-id=\"5415701443812303271\">🚀</tg-emoji> ❗️ Загроза балістики у Києві та низці областей</b>\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-09-10",
  "cash_rates": {
   "date": "2026-09-10",
