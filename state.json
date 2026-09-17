@@ -606,11 +606,7 @@
   }
  },
  "last_regular_post_at": "2026-09-17T00:10:38.864474+03:00",
- "active_alert": {
-  "message_id": 5251,
-  "posted_at": "2026-09-17T02:05:29.379774+03:00",
-  "caption": "<b>❗️Ракетна небезпека у Києві</b>\n\nПовідомлення про ракетну небезпеку опубліковано в телеграм‑каналі @kyiv\n\n📌 <a href=\"https://t.me/Suputnyk_news\">Супутник — підписатися</a>"
- },
+ "active_alert": null,
  "modgov_losses_date": "2026-09-16",
  "cash_rates": {
   "date": "2026-09-16",
