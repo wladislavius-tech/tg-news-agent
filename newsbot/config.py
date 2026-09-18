@@ -20,12 +20,23 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 
+
+def _secret(name: str, default: str = "") -> str:
+    """Секрет із env, обрізаний від пробілів/переносів по краях.
+
+    Реальний кейс 09.2026: CLOUDFLARE_ACCOUNT_ID у GitHub Secrets вставили з
+    пробілом у кінці — URL став .../accounts/<id>%20/ai/..., Cloudflare
+    відповідав 404, п'ятий провайдер каскаду мовчки випав на два тижні.
+    Пробіл у Bearer-токені ламає так само, тому обрізаємо всі секрети."""
+    return os.environ.get(name, default).strip()
+
+
 # --- Обов'язкові секрети ---
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHANNEL = os.environ.get("TELEGRAM_CHANNEL", "")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+TELEGRAM_BOT_TOKEN = _secret("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL = _secret("TELEGRAM_CHANNEL")
+GEMINI_API_KEY = _secret("GEMINI_API_KEY")
 # Особистий chat_id власника: сюди бот шле сповіщення про збої (необов'язково)
-TELEGRAM_ADMIN_CHAT = os.environ.get("TELEGRAM_ADMIN_CHAT", "")
+TELEGRAM_ADMIN_CHAT = _secret("TELEGRAM_ADMIN_CHAT")
 
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # Резервна модель: у кожної моделі своя квота безкоштовного тарифу.
@@ -37,7 +48,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # віддає 404 — покладатися на список не можна, лише на реальний запит.)
 GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-flash-lite-latest")
 # Другий AI-провайдер (безкоштовний Groq): вмикається, коли Gemini без квоти
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEY = _secret("GROQ_API_KEY")
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 # Третій і четвертий AI-провайдер (Cloudflare Workers AI, OpenRouter):
 # додано 2026-08-02, коли GitHub Models пішов у retirement brownout (410
@@ -51,8 +62,8 @@ GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 # дозволений для production. Потребує ДВА значення (не один ключ) —
 # Account ID + API Token. JSON-режим у моделей Workers AI задокументований
 # непослідовно, тож _cloudflare_json парсить лениво (_lenient_json).
-CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_ACCOUNT_ID = _secret("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = _secret("CLOUDFLARE_API_TOKEN")
 CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
 # ВІДОМА ОБМЕЖЕНІСТЬ: Workers AI має default max_tokens=256, і компат-шар,
 # схоже, ігнорує наше явне max_tokens=4000 — короткі JSON (перевірка
@@ -75,27 +86,24 @@ CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL", "@cf/meta/llama-3.3-70b-in
 # (inclusionai/ling-3.0-flash) повертав 400 Bad Request саме через це.
 # Перевіряти supported_parameters моделі на openrouter.ai/api/v1/models
 # перед заміною.
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY = _secret("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
-# П'ятий AI-провайдер — GitHub Models. У GitHub Actions працює через вбудований
-# GITHUB_TOKEN (потрібен permissions: models: read у workflow), без окремого ключа.
-# Лишений останнім у каскаді (не видалений) — на випадок, якщо retirement
-# brownout виявиться тимчасовим, а не остаточним згортанням сервісу.
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
-GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
+# GitHub Models був п'ятим у каскаді, але з 02.08.2026 стабільно віддає
+# 410 Gone (сервіс згорнуто) — прибраний 18.09.2026, щоб не робити зайвий
+# запит і не смітити в логах.
 # Той самий довгоживучий токен, що продовжує crosspost.py — тільки для читання
 # (stats.py викликає лише *_insights, нічого не публікує й не продовжує сам).
-THREADS_TOKEN = os.environ.get("THREADS_TOKEN", "")
+THREADS_TOKEN = _secret("THREADS_TOKEN")
 
 # Чи доступний хоч один AI-провайдер (для генерації текстів)
 AI_AVAILABLE = bool(
     GEMINI_API_KEY or GROQ_API_KEY
     or (CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN)
-    or OPENROUTER_API_KEY or GITHUB_TOKEN
+    or OPENROUTER_API_KEY
 )
 
 # Таймаути AI-запитів, секунд. Було 60 на КОЖНОГО провайдера — при повному
-# каскаді (Gemini ×2 → Groq → Cloudflare → OpenRouter → GitHub) один JSON-виклик
+# каскаді (Gemini ×2 → Groq → Cloudflare → OpenRouter) один JSON-виклик
 # міг з'їсти до 6 хв, а їх кілька за запуск. Реальний наслідок 06.08.2026:
 # job "post" тривала 9-22 хв при тригерах кожні 5 хв, черга скасовувала
 # наступні запуски, канал мовчав по 36-79 хв. Первинному провайдеру лишаємо
@@ -103,8 +111,6 @@ AI_AVAILABLE = bool(
 # встигла нормальна відповідь, але зависання не коштувало хвилин.
 AI_TIMEOUT_PRIMARY = int(os.environ.get("AI_TIMEOUT_PRIMARY", "45"))
 AI_TIMEOUT_FALLBACK = int(os.environ.get("AI_TIMEOUT_FALLBACK", "30"))
-# GitHub Models у retirement brownout — від нього чекати нічого, хай падає швидко
-AI_TIMEOUT_GITHUB = int(os.environ.get("AI_TIMEOUT_GITHUB", "15"))
 
 # --- Джерело новин ---
 FEED_URL = "https://www.ukr.net/news/main.html"
@@ -134,7 +140,7 @@ READER_PROXIES = [
 READER_PROXY_ATTEMPTS = int(os.environ.get("READER_PROXY_ATTEMPTS", "2"))
 # Необов'язковий ключ jina.ai: дає власну квоту замість спільного анонімного
 # пулу й прибирає причину плаваючих 403. Безкоштовний на jina.ai/reader.
-JINA_API_KEY = os.environ.get("JINA_API_KEY", "")
+JINA_API_KEY = _secret("JINA_API_KEY")
 READER_PROXY = READER_PROXIES[0][0].replace("{url}", "")  # сумісність
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

@@ -53,7 +53,7 @@ CHANNEL_URL = f"https://t.me/{CHANNEL}"
 WATERMARK_LABEL = os.environ.get("WATERMARK_LABEL", "Suputnyk_news")  # публічна назва каналу для водяного знаку
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "3"))
 SEED_LAST_ID = int(os.environ.get("SEED_LAST_ID", "0"))
-IG_USER_ID = os.environ.get("IG_USER_ID", "")
+IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 GH_REPO = os.environ.get("GITHUB_REPOSITORY", "wladislavius-tech/tg-news-agent")
 RELEASE_TAG = "instagram-media"
 
@@ -324,7 +324,7 @@ def delete_release_asset(name: str) -> None:
 
 def instagram_token(state: dict) -> str | None:
     ig = state.setdefault("instagram", {})
-    token = ig.get("token") or os.environ.get("INSTAGRAM_TOKEN", "")
+    token = ig.get("token") or os.environ.get("INSTAGRAM_TOKEN", "").strip()
     if not token:
         return None
     last = dt.datetime.fromisoformat(ig["refreshed_at"]) if ig.get("refreshed_at") else None

@@ -687,33 +687,10 @@ def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
         return None
 
 
-def _github_models_json(prompt: str, temperature: float = 0.4) -> dict | None:
-    """JSON-запит до GitHub Models (OpenAI-сумісний) — четвертий безкоштовний провайдер."""
-    if not config.GITHUB_TOKEN:
-        return None
-    try:
-        resp = requests.post(
-            "https://models.github.ai/inference/chat/completions",
-            headers={"Authorization": f"Bearer {config.GITHUB_TOKEN}"},
-            json={
-                "model": config.GITHUB_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": 4000,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=config.AI_TIMEOUT_GITHUB,
-        )
-        resp.raise_for_status()
-        return json.loads(resp.json()["choices"][0]["message"]["content"])
-    except Exception as exc:  # noqa: BLE001
-        log.warning("GitHub Models %s: %s", config.GITHUB_MODEL, exc)
-        return None
-
 
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
     """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → Cloudflare →
-    OpenRouter → GitHub Models.
+    OpenRouter.
 
     Кожен наступний вмикається, лише коли попередній без квоти чи впав.
     """
@@ -739,7 +716,6 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
         _groq_json(prompt, temperature)
         or _cloudflare_json(prompt, temperature)
         or _openrouter_json(prompt, temperature)
-        or _github_models_json(prompt, temperature)
     )
 
 

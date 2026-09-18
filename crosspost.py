@@ -154,17 +154,15 @@ def is_priority(text: str) -> bool:
     return is_strike_news(text) or is_scandal(text)
 
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 _GEMINI_MODELS = ("gemini-2.5-flash", "gemini-2.0-flash")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
-CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
 CLOUDFLARE_MODEL = os.environ.get("CLOUDFLARE_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "").strip()
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemma-4-31b-it:free")
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "") or os.environ.get("GH_MODELS_TOKEN", "")
-GITHUB_MODEL = os.environ.get("GITHUB_MODEL", "openai/gpt-4o-mini")
 
 _COMPARE_PROMPT = """Ти редактор українського новинного каналу (тема: війна, Україна, світові події).
 Дано два коротких уривки новин. Обери, який ВАЖЛИВІШИЙ для суспільства прямо зараз —
@@ -278,27 +276,6 @@ def _openrouter_compare(prompt: str) -> dict | None:
         return None
 
 
-def _github_models_compare(prompt: str) -> dict | None:
-    if not GITHUB_TOKEN:
-        return None
-    try:
-        r = requests.post(
-            "https://models.github.ai/inference/chat/completions",
-            headers={"Authorization": f"Bearer {GITHUB_TOKEN}"},
-            json={
-                "model": GITHUB_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.2, "max_tokens": 200,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=30,
-        )
-        r.raise_for_status()
-        return json.loads(r.json()["choices"][0]["message"]["content"])
-    except Exception as e:  # noqa: BLE001
-        print(f"[!] GitHub Models compare: {e}")
-        return None
-
 
 def ai_pick_more_important(text_a: str, text_b: str) -> str:
     """"a" чи "b" — яка новина важливіша для суспільства. Каскад провайдерів
@@ -308,7 +285,7 @@ def ai_pick_more_important(text_a: str, text_b: str) -> str:
     prompt = _COMPARE_PROMPT.format(a=text_a[:500], b=text_b[:500])
     for name, fn in (("Gemini", _gemini_compare), ("Groq", _groq_compare),
                      ("Cloudflare", _cloudflare_compare),
-                     ("OpenRouter", _openrouter_compare), ("GitHub Models", _github_models_compare)):
+                     ("OpenRouter", _openrouter_compare)):
         data = fn(prompt)
         if data:
             winner = "b" if data.get("winner") == "b" else "a"
@@ -347,7 +324,7 @@ def format_body(text: str, limit: int = 280) -> str:
 
 def threads_token(state: dict) -> str | None:
     th = state.setdefault("threads", {})
-    token = th.get("token") or os.environ.get("THREADS_TOKEN", "")
+    token = th.get("token") or os.environ.get("THREADS_TOKEN", "").strip()
     if not token:
         return None
     last = dt.datetime.fromisoformat(th["refreshed_at"]) if th.get("refreshed_at") else None
