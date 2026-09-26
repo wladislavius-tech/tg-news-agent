@@ -28,7 +28,6 @@ def load() -> dict:
     state.setdefault("horoscope_date", "")
     state.setdefault("rates", {"date": "", "values": {}})
     state.setdefault("fuel", {"date": "", "values": {}})
-    state.setdefault("active_alert", None)
     state.setdefault("generic_photo_last", {})
     state.setdefault("recent_image_hashes", [])
     return state
