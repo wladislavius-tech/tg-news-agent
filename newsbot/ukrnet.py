@@ -119,9 +119,25 @@ def _get(url: str, proxy_fallback: bool = False) -> requests.Response:
     return _via_proxy(url)
 
 
+class FeedUnavailable(Exception):
+    """Стрічку Укрнету не вдалося прочитати ЖОДНИМ шлюзом.
+
+    Це минуща зовнішня несправність (усі проксі одночасно віддали 403/503 чи
+    таймаут), а не помилка бота: наступний запуск через 5 хв зазвичай проходить.
+    Окремий тип потрібен, щоб main() завершився мирно (exit 0) — інакше
+    GitHub Actions шле власнику лист "Run failed" на кожен такий випадок,
+    а реагувати на нього все одно нема чим."""
+
+
 def fetch_feed(now: datetime) -> list[FeedItem]:
     """Парсить головну стрічку Укрнету. `now` — поточний київський час."""
-    html = _get(config.FEED_URL, proxy_fallback=True).text
+    try:
+        html = _get(config.FEED_URL, proxy_fallback=True).text
+    except requests.RequestException as exc:
+        # ЛИШЕ мережеві збої (HTTPError/Timeout/ConnectionError). Ширший
+        # except Exception тут неприпустимий: він ковтав би і справжні баги
+        # всередині _get, перетворюючи їх на "тихий" пропуск запуску.
+        raise FeedUnavailable(str(exc)) from exc
     soup = BeautifulSoup(html, "html.parser")
     items: list[FeedItem] = []
     for section in soup.select("section.im"):

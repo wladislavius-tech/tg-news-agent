@@ -1040,9 +1040,32 @@ def main() -> None:
         run(dry_run=args.dry_run, force=args.force)
     except SystemExit:
         raise
+    except ukrnet.FeedUnavailable as exc:
+        # Минуща недоступність джерела — НЕ падаємо з exit 1: інакше GitHub
+        # шле лист "Run failed" на кожен випадок (~3% запусків, ≈9 листів на
+        # добу), хоча робити з цим нічого не треба — наступний тик прочитає.
+        # Але якщо стрічка не читається ПІДРЯД — це вже справжня поломка,
+        # тож один раз (рівно на порозі) пишемо власнику в Telegram.
+        log.warning("Стрічка Укрнету недоступна (%s) — пропускаю запуск", exc)
+        if not args.dry_run:
+            state = state_mod.load()
+            streak = state.get("feed_miss_streak", 0) + 1
+            state["feed_miss_streak"] = streak
+            state_mod.save(state)
+            if streak == config.FEED_MISS_ALERT_STREAK:
+                tg.send_admin(
+                    f"⚠️ Стрічка Укрнету недоступна {streak} запусків підряд "
+                    f"(~{streak * 5} хв). Остання помилка: {exc}"
+                )
+        return
     except Exception as exc:
         tg.send_admin(f"⚠️ Новинний агент впав: {type(exc).__name__}: {exc}")
         raise
+    if not args.dry_run:
+        state = state_mod.load()
+        if state.get("feed_miss_streak"):
+            state["feed_miss_streak"] = 0
+            state_mod.save(state)
 
 
 if __name__ == "__main__":

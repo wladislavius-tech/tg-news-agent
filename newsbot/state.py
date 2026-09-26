@@ -16,6 +16,7 @@ def load() -> dict:
         state = json.loads(config.STATE_FILE.read_text(encoding="utf-8"))
     else:
         state = {}
+    state.setdefault("feed_miss_streak", 0)
     state.setdefault("posted_ids", [])
     state.setdefault("posted_titles", [])
     state.setdefault("posted_facts", [])
