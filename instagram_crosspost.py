@@ -324,6 +324,25 @@ def delete_release_asset(name: str) -> None:
 
 def instagram_token(state: dict) -> str | None:
     ig = state.setdefault("instagram", {})
+    cached = ig.get("token")
+    # Кешований (автопродовжуваний) токен МАЄ пріоритет над секретом — але
+    # якщо власник вручну перевипустив токен через Meta-дашборд (стару
+    # сесію інвалідовано, наприклад через зміну пароля), кеш інакше мовчки
+    # продовжував би використовувати вже мертвий токен місяцями, ігноруючи
+    # оновлений секрет (знайдено наживо 27.09.2026 — токен зламався 24.09,
+    # новий видали 27.09, але кеш ще 2 прогони тримався за старий). Дешева
+    # перевірка одним запитом рятує від цього і робить перевипуск токена
+    # самодостатнім — без ручного очищення кешу Actions.
+    if cached:
+        try:
+            check = requests.get(f"{INSTAGRAM_API}/{IG_USER_ID}",
+                                 params={"fields": "id", "access_token": cached}, timeout=15)
+            if check.status_code != 200:
+                print("[!] Кешований токен Instagram недійсний — переходжу на секрет INSTAGRAM_TOKEN")
+                ig.pop("token", None)
+                ig.pop("refreshed_at", None)
+        except requests.RequestException:
+            pass  # мережевий збій самої перевірки — не привід відкидати кеш
     token = ig.get("token") or os.environ.get("INSTAGRAM_TOKEN", "").strip()
     if not token:
         return None
