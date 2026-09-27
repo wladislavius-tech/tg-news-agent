@@ -11,10 +11,6 @@ on:
         description: "Ігнорувати розклад і запостити зараз"
         type: boolean
         default: false
-      run_dupe_check:
-        description: "ТИМЧАСОВО: перевірити дублі Instagram за останній місяць"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -224,23 +220,3 @@ jobs:
         with:
           path: instagram_crosspost_state.json
           key: instagram-crosspost-state-${{ github.run_id }}
-
-  # ТИМЧАСОВИЙ job для одноразової перевірки дублів Instagram — видалити
-  # разом із check_dupes_tmp.py після використання. Запускається ЛИШЕ коли
-  # явно передано run_dupe_check=true (не на кожен workflow_dispatch).
-  dupe-check-tmp:
-    if: github.event.inputs.run_dupe_check == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install requests
-      - name: Перевірити дублі за останній місяць
-        env:
-          INSTAGRAM_TOKEN: ${{ secrets.INSTAGRAM_TOKEN }}
-          IG_USER_ID: ${{ secrets.IG_USER_ID }}
-        run: python check_dupes_tmp.py
