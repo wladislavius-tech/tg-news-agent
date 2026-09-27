@@ -53,6 +53,10 @@ CHANNEL_URL = f"https://t.me/{CHANNEL}"
 WATERMARK_LABEL = os.environ.get("WATERMARK_LABEL", "Suputnyk_news")  # публічна назва каналу для водяного знаку
 MAX_PER_RUN = int(os.environ.get("MAX_PER_RUN", "3"))
 SEED_LAST_ID = int(os.environ.get("SEED_LAST_ID", "0"))
+# Швидкі "Оновлено"-допости про ту саму подію (типово кластеряться в межах
+# 10-40 хв) в Instagram виглядають як дублі — кросспостимо не частіше, ніж
+# раз на стільки хвилин; перший "Оновлено" в кластері завжди проходить.
+UPDATE_COOLDOWN_MINUTES = int(os.environ.get("UPDATE_COOLDOWN_MINUTES", "90"))
 IG_USER_ID = os.environ.get("IG_USER_ID", "").strip()
 GH_REPO = os.environ.get("GITHUB_REPOSITORY", "wladislavius-tech/tg-news-agent")
 RELEASE_TAG = "instagram-media"
@@ -99,6 +103,15 @@ def is_news(text: str) -> bool:
     if "Гороскоп" in t[:40] or "Доброго ранку" in t[:40] or "Головне за" in t[:40]:
         return False
     return True
+
+
+def is_update(text: str) -> bool:
+    """Швидкий продовжуючий допис про вже висвітлену подію (канал сам
+    публікує серію "Оновлено: ..." по мірі надходження деталей одного
+    інциденту — напр. "22 постраждалих" → "25 постраждалих" → "43
+    постраждалих" з різницею в лічені хвилини). У TG це доречно, але в
+    Instagram кілька відео про одну подію поспіль виглядають як дублі."""
+    return "оновлено" in text[:40].lower()
 
 
 _STRIKE_VERB_RE = re.compile(r"вразил|уразил|уражен|знищ|завдал.{0,15}удар", re.IGNORECASE)
@@ -471,6 +484,15 @@ def main() -> None:
             save_state(state)
             continue
 
+        if is_update(p["text"]):
+            last_update = state.get("last_update_posted_at")
+            if last_update and (dt.datetime.now() - dt.datetime.fromisoformat(last_update)
+                                  ) < dt.timedelta(minutes=UPDATE_COOLDOWN_MINUTES):
+                print(f"Пост {p['id']}: 'Оновлено' занадто швидко після попереднього — пропускаю")
+                state["last_posted_id"] = p["id"]
+                save_state(state)
+                continue
+
         video_url = p.get("video")
         source = "власне відео"
         if not video_url:
@@ -489,6 +511,8 @@ def main() -> None:
             print("  Instagram: опубліковано")
             posted += 1
             state["last_posted_id"] = p["id"]
+            if is_update(p["text"]):
+                state["last_update_posted_at"] = dt.datetime.now().isoformat(timespec="seconds")
             save_state(state)
             time.sleep(3)
         else:
