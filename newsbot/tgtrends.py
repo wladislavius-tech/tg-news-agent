@@ -188,6 +188,8 @@ def fetch_channel(channel: str, now: datetime, before: int = 0) -> list[TrendPos
                 image_url = mimg.group(1)
         if is_alert_post(text):
             continue  # сповіщення про тривогу/загрозу — не наш контент
+        if is_fundraising_post(text):
+            continue  # збір коштів — чужі реквізити не передруковуємо
         posts.append(TrendPost(
             channel=channel, post_id=post_id, text=text, views=views,
             published=published, url=f"https://t.me/{channel}/{post_id}",
@@ -349,6 +351,43 @@ _ALERT_THREAT_LEAD_RE = re.compile(
     r"(?:бпла|безпілотник|дрон|шахед|балісти|ракетн|удар|обстріл|каб)",
     re.IGNORECASE,
 )
+
+
+# Пости-ЗБОРИ (донат на бригаду, банка монобанку, номер картки) — НЕ постимо.
+# Причина: ми передруковуємо з чужих каналів і НЕ можемо перевірити, хто і на
+# що збирає. Опублікувати чужі реквізити = поручитися за них своїм каналом;
+# якщо це шахраї, гроші читачів підуть їм, а репутація згорить наша.
+# Рішення користувача 27.09.2026 (реальний кейс: пост із картками й PayPal).
+#
+# Реквізити ріжемо будь-де в тексті (вони самі по собі роблять пост збором),
+# а заклик «збір на...» — лише в першому реченні, щоб не рубати новину, яка
+# просто згадує збір як факт.
+_PAYMENT_RE = re.compile(
+    r"send\.monobank\.ua|base\.monobank\.ua|monobank\.ua/jar|"
+    r"privat24|paypal|patreon|buymeacoffee|"
+    r"\b\d{16}\b|"                      # номер картки одним рядком
+    r"\bUA\d{27}\b|"                    # IBAN
+    r"\b(?:bc1|0x)[a-z0-9]{25,}\b",           # крипто-гаманець
+    re.IGNORECASE,
+)
+_FUNDRAISE_RE = re.compile(
+    r"збір\w*\s+(?:на|для|кошт)|збираємо\s+(?:на|кошт)|"
+    r"донат|реквізит|банка\s+монобанку|потрібна\s+ваша\s+допомога|"
+    r"долуч\w*\s+до\s+збору|закрива\w*\s+збір|"
+    r"підтримати\s+збір|скинутися",
+    re.IGNORECASE,
+)
+
+
+def is_fundraising_post(text: str) -> bool:
+    """Чи це збір коштів / прохання про донат (а не новина про подію)."""
+    if _PAYMENT_RE.search(text):
+        return True
+    lead = text[:_ALERT_LEAD_CHARS]
+    end = _SENTENCE_END_RE.search(lead)
+    if end:
+        lead = lead[:end.start()]
+    return bool(_FUNDRAISE_RE.search(lead))
 
 
 def is_alert_post(text: str) -> bool:

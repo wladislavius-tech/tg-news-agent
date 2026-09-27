@@ -679,6 +679,13 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
+    # Останній рубіж проти зборів: tgtrends.fetch_channel ріже їх у джерелі,
+    # але новина з Укрнету туди не потрапляє, а реквізити можуть приїхати в
+    # описі статті. Публікувати чужу картку = поручитися за збір своїм
+    # каналом, не маючи змоги його перевірити.
+    if tgtrends.is_fundraising_post(caption):
+        log.info("Пропускаю збір коштів (чужі реквізити не передруковуємо): %r", item.title)
+        return False
     img_url = media.pop("_img_url", "")
     generic_photo = media.pop("_generic_photo", None)
     is_local_asset = media.pop("_local_asset", False)
