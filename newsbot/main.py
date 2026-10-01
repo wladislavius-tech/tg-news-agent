@@ -679,12 +679,17 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
-    # Останній рубіж проти зборів: tgtrends.fetch_channel ріже їх у джерелі,
-    # але новина з Укрнету туди не потрапляє, а реквізити можуть приїхати в
-    # описі статті. Публікувати чужу картку = поручитися за збір своїм
-    # каналом, не маючи змоги його перевірити.
+    # Останній рубіж проти зборів і тривог: tgtrends.fetch_channel ріже їх у
+    # джерелі, але новина з Укрнету туди НЕ потрапляє — а ще заголовок пише
+    # AI, тож тривога може з'явитися вже на виході, навіть коли текст джерела
+    # фільтр не зачепив. Реальний кейс 01.10.2026: "Київ під жовтою тривогою
+    # через БпЛА" пройшов повз fetch_channel і потрапив у канал.
+    # Тому перевіряємо ГОТОВИЙ caption — останнє, що бачить читач.
     if tgtrends.is_fundraising_post(caption):
         log.info("Пропускаю збір коштів (чужі реквізити не передруковуємо): %r", item.title)
+        return False
+    if tgtrends.is_alert_post(caption):
+        log.info("Пропускаю сповіщення про тривогу: %r", item.title)
         return False
     img_url = media.pop("_img_url", "")
     generic_photo = media.pop("_generic_photo", None)
