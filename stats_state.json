@@ -1,10 +1,14 @@
 {
- "tg_offset": 732687875,
+ "tg_offset": 732687876,
  "tg_bot_id": 8466428396,
  "tg_reactions": {
   "7140": {
    "total": 2,
    "top_emoji": "❤"
+  },
+  "7078": {
+   "total": 2,
+   "top_emoji": "👍"
   }
  },
  "tg_joined": 0,
