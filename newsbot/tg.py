@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 
 import requests
 
 from . import config
+
+log = logging.getLogger(__name__)
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -104,6 +108,61 @@ def _first_message_id(result) -> int | None:
     return None
 
 
+_MEDIA_FAIL_RE = re.compile(r"failed to send message #(\d+)")
+
+
+def _media_group(kind: str, blobs: list[bytes], caption: str) -> dict | list:
+    """sendMediaGroup, що НЕ втрачає пост через одне зіпсоване медіа.
+
+    Telegram обробляє групу цілком: якщо він не зміг прожувати один файл
+    (IMAGE_PROCESS_FAILED / VIDEO_PROCESS_FAILED), падає ВЕСЬ запит — і
+    новина не виходить узагалі. Реальний кейс 14.10.2026: 9 падінь job за
+    день, щоразу з листом "Run failed" власнику.
+
+    Тому деградуємо поступово: прибираємо файл, на який свариться Telegram
+    (він називає його номер у помилці, нумерація з 1), і пробуємо знову.
+    Коли медіа лишилось менше двох — шлемо одним повідомленням, а в
+    безнадійному разі хай вирішує викликач (повертаємо помилку далі)."""
+    ext, mime = ("jpg", "image/jpeg") if kind == "photo" else ("mp4", "video/mp4")
+    items = list(blobs)
+    for _ in range(config.MEDIA_GROUP_RETRIES):
+        if len(items) < 2:
+            break
+        media, files = [], {}
+        for i, blob in enumerate(items):
+            name = f"{kind}{i}"
+            files[name] = (f"{name}.{ext}", blob, mime)
+            entry: dict = {"type": kind, "media": f"attach://{name}"}
+            if i == 0:
+                entry["caption"] = caption
+                entry["parse_mode"] = "HTML"
+            media.append(entry)
+        try:
+            return _call(
+                "sendMediaGroup",
+                data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
+                files=files,
+            )
+        except RuntimeError as exc:
+            m = _MEDIA_FAIL_RE.search(str(exc))
+            if not m:
+                raise
+            idx = int(m.group(1)) - 1
+            if not 0 <= idx < len(items):
+                raise
+            log.warning("Telegram не прийняв %s #%d — прибираю й пробую знову (%s)",
+                        kind, idx + 1, exc)
+            items.pop(idx)
+    # Лишилось одне (або все решта не підійшло) — звичайний одиночний пост
+    single, data_key = items[0], kind
+    log.info("Альбом не зібрався — публікую одним %s", kind)
+    return _call(
+        "sendPhoto" if kind == "photo" else "sendVideo",
+        data={"chat_id": config.TELEGRAM_CHANNEL, "caption": caption, "parse_mode": "HTML"},
+        files={data_key: (f"news.{ext}", single, mime)},
+    )
+
+
 def send_post(
     caption: str,
     image: bytes | None = None,
@@ -115,35 +174,9 @@ def send_post(
     """Публікує пост, повертає message_id (для посилання на пост із дайджесту)."""
     if video_album:
         # Добірка коротких відео однієї теми (media group з відео)
-        media, files = [], {}
-        for i, vid in enumerate(video_album):
-            name = f"video{i}"
-            files[name] = (f"{name}.mp4", vid, "video/mp4")
-            entry: dict = {"type": "video", "media": f"attach://{name}"}
-            if i == 0:
-                entry["caption"] = caption
-                entry["parse_mode"] = "HTML"
-            media.append(entry)
-        result = _call(
-            "sendMediaGroup",
-            data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
-            files=files,
-        )
+        result = _media_group("video", video_album, caption)
     elif album:
-        media, files = [], {}
-        for i, img in enumerate(album):
-            name = f"photo{i}"
-            files[name] = (f"{name}.jpg", img, "image/jpeg")
-            entry: dict = {"type": "photo", "media": f"attach://{name}"}
-            if i == 0:
-                entry["caption"] = caption
-                entry["parse_mode"] = "HTML"
-            media.append(entry)
-        result = _call(
-            "sendMediaGroup",
-            data={"chat_id": config.TELEGRAM_CHANNEL, "media": json.dumps(media)},
-            files=files,
-        )
+        result = _media_group("photo", album, caption)
     elif video:
         result = _call(
             "sendVideo",

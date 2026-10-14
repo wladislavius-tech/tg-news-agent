@@ -142,6 +142,10 @@ READER_PROXY_ATTEMPTS = int(os.environ.get("READER_PROXY_ATTEMPTS", "2"))
 # власнику в Telegram. Поодинокий збій шлюзів — норма (минає за 5 хв), серія —
 # вже справжня поломка. 6 запусків ≈ 30 хв мовчання каналу.
 FEED_MISS_ALERT_STREAK = int(os.environ.get("FEED_MISS_ALERT_STREAK", "6"))
+# Скільки разів прибирати зіпсоване медіа з альбому, перш ніж здатися й
+# опублікувати пост одним файлом. Більше двох не має сенсу: якщо Telegram
+# не бере два файли поспіль, проблема не в окремому кадрі.
+MEDIA_GROUP_RETRIES = int(os.environ.get("MEDIA_GROUP_RETRIES", "2"))
 # Необов'язковий ключ jina.ai: дає власну квоту замість спільного анонімного
 # пулу й прибирає причину плаваючих 403. Безкоштовний на jina.ai/reader.
 JINA_API_KEY = _secret("JINA_API_KEY")
