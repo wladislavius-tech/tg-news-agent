@@ -1,27 +1,10 @@
 {
  "tg_offset": 732687944,
  "tg_bot_id": 8466428396,
- "tg_reactions": {
-  "7704": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "7711": {
-   "total": 2,
-   "top_emoji": "⚡"
-  },
-  "7716": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "7740": {
-   "total": 2,
-   "top_emoji": "❤"
-  }
- },
+ "tg_reactions": {},
  "tg_joined": 0,
  "tg_left": 0,
- "last_report_date": "2026-10-17",
+ "last_report_date": "2026-10-18",
  "history": [
   {
    "date": "2026-08-02",
@@ -4753,6 +4736,64 @@
      "posts": 2,
      "engagement": 78,
      "views": 703
+    }
+   }
+  },
+  {
+   "date": "2026-10-18",
+   "tg_subscribers": 247,
+   "tg_joined": 0,
+   "tg_left": 0,
+   "tg_net": 0,
+   "tg_posts": 19,
+   "tg_views": 162,
+   "tg_reactions": 0,
+   "tg_by_category": {
+    "other": {
+     "posts": 6,
+     "engagement": 0,
+     "views": 43
+    },
+    "strike": {
+     "posts": 2,
+     "engagement": 0,
+     "views": 19
+    },
+    "world": {
+     "posts": 3,
+     "engagement": 0,
+     "views": 25
+    },
+    "casualty": {
+     "posts": 8,
+     "engagement": 0,
+     "views": 75
+    }
+   },
+   "threads_followers": 271,
+   "threads_views": 12110,
+   "threads_likes": 270,
+   "threads_posts": 24,
+   "threads_by_category": {
+    "other": {
+     "posts": 5,
+     "engagement": 3,
+     "views": 3265
+    },
+    "world": {
+     "posts": 7,
+     "engagement": 41,
+     "views": 3279
+    },
+    "casualty": {
+     "posts": 8,
+     "engagement": 162,
+     "views": 4710
+    },
+    "strike": {
+     "posts": 4,
+     "engagement": 163,
+     "views": 1962
     }
    }
   }
