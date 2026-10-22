@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import crosspost  # noqa: E402 — реюз is_news/format_body/is_strike_news
-from newsbot import genimage, tgtrends, ukrnet  # noqa: E402
+from newsbot import generic_photos, tgtrends, ukrnet  # noqa: E402
 from tiktok import frame, state as state_mod, tts, video  # noqa: E402
 
 log = logging.getLogger("tiktok.generate")
@@ -68,24 +68,36 @@ def _headline(text: str, limit: int = 100) -> str:
     return first_sentence[:limit].rsplit(" ", 1)[0]
 
 
-def _background(headline: str, body: str, image_url: str) -> bytes | None:
-    if image_url:
-        img = ukrnet.download_image(image_url)
+def _background(headline: str, body: str, post: tgtrends.TrendPost, now: dt.datetime) -> bytes | None:
+    """Лише РЕАЛЬНІ фото — жодної AI-генерації зображення з нуля (за прямою
+    вимогою користувача: AI можна лише для редагування вже наявного фото —
+    тобто текст/бренд поверх нього в frame.render_slide, не для малювання
+    сцени "з нуля"). Пріоритет:
+    1) фото самого поста; 2) та сама подія в інших великих каналах;
+    3) готове реальне фото відомої персони/установи (newsbot/assets/generic).
+    None — якщо жодного реального фото не знайшлось; тоді frame.render_slide
+    сам бере фірмовий градієнт (без AI)."""
+    if post.image_url:
+        img = ukrnet.download_image(post.image_url)
         if img:
             return img
-    illustration = genimage.generate_illustration(headline, body)
-    if illustration:
-        return illustration
-    return genimage.generate_background()
+    alt_image_url, _alt_video_url = tgtrends.find_matching_media(
+        body, now, exclude_channel=CHANNEL
+    )
+    if alt_image_url:
+        img = ukrnet.download_image(alt_image_url)
+        if img:
+            return img
+    return generic_photos.pick(f"{headline} {body}", now)
 
 
-def process_post(post: tgtrends.TrendPost) -> bool:
+def process_post(post: tgtrends.TrendPost, now: dt.datetime) -> bool:
     clean_text = _strip_emoji(post.text)
     body = crosspost.format_body(clean_text, limit=NARRATION_LIMIT)
     headline = _headline(clean_text)
     log.info("Пост %d: %s", post.post_id, headline[:70])
 
-    background = _background(headline, body, post.image_url)
+    background = _background(headline, body, post, now)
     frame_png = frame.render_slide(
         headline, background=background,
         tag="#контрудар" if crosspost.is_strike_news(post.text) else "НОВИНИ УКРАЇНИ",
@@ -139,7 +151,7 @@ def run(count: int) -> None:
             state_mod.save(state)
             continue
         try:
-            if process_post(post):
+            if process_post(post, now):
                 generated += 1
         except Exception:  # noqa: BLE001 — один збій не має зупиняти всю партію
             log.exception("Не вдалося зібрати відео для поста %d", post.post_id)

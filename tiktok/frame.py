@@ -46,7 +46,7 @@ def _photo_background(photo: bytes) -> Image.Image | None:
 
 
 def render_slide(headline: str, *, background: bytes | None = None, tag: str = "НОВИНИ УКРАЇНИ") -> bytes:
-    """Заставка: фон (фото новини/AI-ілюстрація або градієнт) + великий заголовок
+    """Заставка: фон (реальне фото новини або фірмовий градієнт) + великий заголовок
     у безпечній зоні + бренд-плашка й підпис каналу знизу."""
     img = (background and _photo_background(background)) or _gradient_background()
     draw = ImageDraw.Draw(img)
