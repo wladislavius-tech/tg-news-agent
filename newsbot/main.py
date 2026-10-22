@@ -18,7 +18,7 @@ from itertools import zip_longest
 from zoneinfo import ZoneInfo
 
 from . import (
-    config, cover, genimage, generic_photos, llm, modgov, source_logos,
+    config, cover, genimage, llm, modgov, source_logos,
     state as state_mod, tg, tgtrends, ukrnet,
 )
 
@@ -125,13 +125,13 @@ def _pick_trend_fallback(
 
 def build_post(
     item: ukrnet.FeedItem, now: datetime, prior_context: str = "",
-    last_generic_photos: dict[str, str] | None = None, prior_url: str = "",
+    prior_url: str = "",
 ) -> tuple[str, dict]:
     """Повертає (підпис, медіа).
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
     фото з каналів-конкурентів (та сама подія) → YouTube-прев'ю (лише коли
-    фото немає) → узагальнене фото відомої персони/установи → обкладинка.
+    фото немає) → лого видання-джерела → текстовий пост.
     Лише РЕАЛЬНІ фото — AI-ілюстрація новини принципово не використовується
     (може вводити в оману, видаючи вигадану сцену за реальне зображення події).
 
@@ -139,10 +139,10 @@ def build_post(
     події (див. llm.classify_relation), сюди приходить текст того поста, щоб
     об'єднати старе й нове в один цілісний пост.
 
-    last_generic_photos — останнє використане фото на людину (person_key ->
-    filename), щоб generic_photos.pick ротував і не повторював той самий
-    портрет поспіль (media["_generic_photo"] у відповіді несе новий вибір,
-    щоб виклик оновив це в state)."""
+    Стокові портрети відомих людей (Зеленський/Путін/Трамп тощо) НЕ
+    підставляються — прибрано 22.10.2026: портрет, підібраний за згадкою
+    прізвища в заголовку, не відповідав новині (напр. президент Чехії + фото
+    Трампа лише тому, що в заголовку був "Трамп")."""
     src_kwargs: dict = {}
     if prior_context:
         src_kwargs["prior_context"] = prior_context
@@ -179,8 +179,8 @@ def build_post(
                 caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": video}
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
-        # шукаємо фото цієї ж події в інших каналах, потім узагальнене фото;
-        # якщо й цього немає — шаблонна обкладинка (без AI-ілюстрації).
+        # шукаємо фото цієї ж події в інших каналах; якщо й цього немає — лого
+        # видання-джерела або текстовий пост (без AI-ілюстрації й стокових портретів).
         img_reasons: list[str] = []
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
@@ -199,31 +199,22 @@ def build_post(
             else:
                 img_reasons.append("канали-конкуренти: тієї самої події з фото не знайдено")
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
-        generic_chosen = None
         used_fallback_asset = image is None
         if image is None:
             log.info(
                 "Фото не знайдено для тренду %r: %s",
                 item.title, "; ".join(img_reasons) or "причина невідома",
             )
-            # Лише тема новини (title), НЕ повний опис — прохідна згадка
-            # персони десь у тілі тексту (напр. "бізнесмени, близькі до
-            # путіна" у новині геть про інше) не має тригерити її фото.
             # Лого видання-джерела — за РЕАЛЬНОЮ атрибуцією вже готового caption.
-            image, generic_chosen = generic_photos.pick(item.title, now, last_generic_photos)
-            if image is None:
-                image = source_logos.pick(llm.attributed_source(caption))
+            image = source_logos.pick(llm.attributed_source(caption))
             log.info(
                 "Фолбек: %s",
-                f"генерик-фото {generic_chosen[0]}" if generic_chosen
-                else ("лого видання-джерела" if image else "не спрацював — публікую текстом"),
+                "лого видання-джерела" if image else "не спрацював — публікую текстом",
             )
         if image:
             media = {"image": image}
-            if generic_chosen:
-                media["_generic_photo"] = generic_chosen
             if used_fallback_asset:
-                # generic/logo-фото легітимно повторюються — перевірка дублів
+                # logo-фото легітимно повторюються — перевірка дублів
                 # фото (_publish_item) не має їх чіпати.
                 media["_local_asset"] = True
             return caption, media
@@ -392,43 +383,29 @@ def build_post(
 
     caption = llm.compose_post(item, sources, meta, **src_kwargs)
 
-    # 5) Узагальнене фото відомої персони/установи, або лого видання-джерела
-    # (президент, ТЦК, BBC/Reuters тощо) — caption уже готовий, бо логотип
-    # видання шукаємо за РЕАЛЬНОЮ атрибуцією поста, а не здогадом із сирих
-    # матеріалів (яких могло бути кілька, а AI обрала одне головне).
-    generic_chosen = None
+    # 5) Реального фото немає — лого видання-джерела (BBC/Reuters тощо): caption
+    # уже готовий, бо логотип видання шукаємо за РЕАЛЬНОЮ атрибуцією поста, а не
+    # здогадом із сирих матеріалів (яких могло бути кілька, а AI обрала одне
+    # головне). Стокові портрети відомих людей не підставляємо.
     used_fallback_asset = not images
     if not images:
         log.info(
             "Фото не знайдено серед %d джерел для %r: %s",
             len(sources), item.title, "; ".join(img_reasons) or "причина невідома",
         )
-        # Лише тема новини (title), НЕ повний опис — прохідна згадка персони
-        # десь у тілі статті не має тригерити її фото (новина може бути геть
-        # про інше й лише побіжно згадувати цю людину).
-        generic, generic_chosen = generic_photos.pick(item.title, now, last_generic_photos)
-        if generic is None:
-            generic = source_logos.pick(llm.attributed_source(caption))
-        if generic:
-            images = [generic]
-            log.info(
-                "Фолбек: %s",
-                f"генерик-фото {generic_chosen[0]}" if generic_chosen else "лого видання-джерела",
-            )
+        logo = source_logos.pick(llm.attributed_source(caption))
+        if logo:
+            images = [logo]
+            log.info("Фолбек: лого видання-джерела")
         else:
-            log.info("Фолбек не спрацював (немає ні відомої персони, ні відомого видання) — публікую текстом")
+            log.info("Фолбек не спрацював (відоме видання не визначено) — публікую текстом")
 
     if len(images) > 1:
-        media = {"album": images, "_img_url": first_image_url}
-        if generic_chosen:
-            media["_generic_photo"] = generic_chosen
-        return caption, media
+        return caption, {"album": images, "_img_url": first_image_url}
     if images:
         media = {"image": images[0], "_img_url": first_image_url}
-        if generic_chosen:
-            media["_generic_photo"] = generic_chosen
         if used_fallback_asset:
-            # generic/logo-фото легітимно повторюються — перевірка дублів
+            # logo-фото легітимно повторюються — перевірка дублів
             # фото (_publish_item) не має їх чіпати.
             media["_local_asset"] = True
         return caption, media
@@ -672,10 +649,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
     prior_context — текст попереднього поста, якщо це його розвиток (об'єднати в один).
     prior_url — посилання на той пост, щоб читач бачив, з чого все почалось."""
     try:
-        caption, media = build_post(
-            item, now, prior_context, last_generic_photos=state.get("generic_photo_last", {}),
-            prior_url=prior_url,
-        )
+        caption, media = build_post(item, now, prior_context, prior_url=prior_url)
     except Exception:
         log.exception("Не вдалося зібрати пост: %r", item.title)
         return False
@@ -692,11 +666,7 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
         log.info("Пропускаю сповіщення про тривогу: %r", item.title)
         return False
     img_url = media.pop("_img_url", "")
-    generic_photo = media.pop("_generic_photo", None)
     is_local_asset = media.pop("_local_asset", False)
-    if generic_photo:
-        person_key, filename = generic_photo
-        state.setdefault("generic_photo_last", {})[person_key] = filename
 
     # Перевірка дублів за фото (не для generic/logo — ті легітимно
     # повторюються): та сама подія під переписаним заголовком, але з тим
