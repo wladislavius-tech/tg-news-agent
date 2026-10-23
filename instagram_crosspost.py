@@ -27,6 +27,7 @@ Instagram не приймає текстові пости, тому для ко�
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 import json
 import os
 import re
@@ -112,6 +113,40 @@ def is_update(text: str) -> bool:
     постраждалих" з різницею в лічені хвилини). У TG це доречно, але в
     Instagram кілька відео про одну подію поспіль виглядають як дублі."""
     return "оновлено" in text[:40].lower()
+
+
+DUP_SIMILARITY = float(os.environ.get("DUP_SIMILARITY", "0.85"))
+DUP_LOOKBACK = int(os.environ.get("DUP_LOOKBACK", "30"))
+
+
+def _norm(text: str) -> str:
+    body = text.split("📌")[0].split("\n\n#")[0]
+    return " ".join(re.findall(r"\w+", body.lower()))[:200]
+
+
+def recent_instagram_norms(token: str) -> list[str]:
+    """Тексти реально опублікованих Reels (не стан кешу) — страховка від
+    повторів, якщо джерело (TG) саме видало одну новину кілька разів."""
+    try:
+        r = requests.get(
+            f"{INSTAGRAM_API}/{IG_USER_ID}/media",
+            params={"fields": "caption", "limit": DUP_LOOKBACK, "access_token": token},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"[!] Перевірка дублів: Instagram {r.status_code}")
+            return []
+        return [n for n in (_norm(m.get("caption") or "") for m in r.json().get("data", [])) if n]
+    except requests.RequestException as e:
+        print(f"[!] Перевірка дублів: {e}")
+        return []
+
+
+def is_duplicate(text: str, recent: list[str]) -> bool:
+    n = _norm(text)
+    if not n:
+        return False
+    return any(difflib.SequenceMatcher(None, n, r).ratio() >= DUP_SIMILARITY for r in recent)
 
 
 _STRIKE_VERB_RE = re.compile(r"вразил|уразил|уражен|знищ|завдал.{0,15}удар", re.IGNORECASE)
@@ -474,12 +509,20 @@ def main() -> None:
         save_state(state)
         return
 
+    recent = recent_instagram_norms(token)
+
     posted = 0
     for p in fresh:
         if posted >= MAX_PER_RUN:
             break
 
         if not is_news(p["text"]):
+            state["last_posted_id"] = p["id"]
+            save_state(state)
+            continue
+
+        if is_duplicate(p["text"], recent):
+            print(f"Пост {p['id']}: схожий на вже опублікований Reel — пропускаю")
             state["last_posted_id"] = p["id"]
             save_state(state)
             continue
@@ -510,6 +553,7 @@ def main() -> None:
         if ok:
             print("  Instagram: опубліковано")
             posted += 1
+            recent.append(_norm(p["text"]))
             state["last_posted_id"] = p["id"]
             if is_update(p["text"]):
                 state["last_update_posted_at"] = dt.datetime.now().isoformat(timespec="seconds")
