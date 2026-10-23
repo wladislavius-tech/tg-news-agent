@@ -650,12 +650,46 @@ def _openrouter_json(prompt: str, temperature: float = 0.4) -> dict | None:
 
 
 
+# Письмові системи, яких не має бути в україномовній новині: іврит, арабська,
+# індійські, тайська, хангиль, кана, ієрогліфи. Реальні кейси (≈1% постів, 8 із
+# 731 за 23.10.2026): «мріяти» → «мريяти», «Дональд» → «Донالد», «Синєгуб» →
+# «Синєгубоבу», «自己的» посеред речення — збій токенізації резервних моделей,
+# коли Gemini без квоти (429), а відповідь першого, хто озвався, ішла в канал.
+_FOREIGN_SCRIPT_RE = re.compile(
+    r"[֐-׿"                                    # іврит
+    r"؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿"  # арабська
+    r"ऀ-෿"                                     # деванагарі … сингальська
+    r"฀-໿"                                     # тайська, лаоська
+    r"ᄀ-ᇿ぀-ヿ㐀-䶿一-鿿가-힯]"  # хангиль, кана, ієрогліфи
+)
+
+
+def _foreign_script_chars(text: str) -> set[str]:
+    return set(_FOREIGN_SCRIPT_RE.findall(text))
+
+
 def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
     """JSON-запит з каскадом провайдерів: Gemini (2 моделі) → Groq → Cloudflare →
     OpenRouter.
 
-    Кожен наступний вмикається, лише коли попередній без квоти чи впав.
+    Кожен наступний вмикається, лише коли попередній без квоти, впав АБО
+    повернув відповідь зі сторонніми символами (див. _FOREIGN_SCRIPT_RE):
+    відповідь, що вносить чужу письменність, якої не було в самому запиті,
+    вважається зіпсованою й не береться. Якщо жоден провайдер не дав чистої
+    відповіді — повертаємо None, як і при повному збої.
     """
+    allowed = _foreign_script_chars(prompt)  # напр. цитата арабською в самому джерелі
+
+    def _ok(data: dict | None, provider: str) -> bool:
+        if not data:
+            return False
+        bad = _foreign_script_chars(json.dumps(data, ensure_ascii=False)) - allowed
+        if bad:
+            log.warning("%s: у відповіді сторонні символи %s — пробую наступного провайдера",
+                        provider, "".join(sorted(bad)))
+            return False
+        return True
+
     if config.GEMINI_API_KEY:
         for model in (config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL):
             gen_cfg: dict = {
@@ -670,15 +704,19 @@ def _gemini_json(prompt: str, temperature: float = 0.4) -> dict | None:
             try:
                 resp = requests.post(url, params={"key": config.GEMINI_API_KEY}, json=payload, timeout=config.AI_TIMEOUT_PRIMARY)
                 resp.raise_for_status()
-                return json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
+                data = json.loads(resp.json()["candidates"][0]["content"]["parts"][0]["text"])
             except Exception as exc:  # noqa: BLE001
                 log.warning("Gemini %s: %s", model, exc)
                 continue
-    return (
-        _groq_json(prompt, temperature)
-        or _cloudflare_json(prompt, temperature)
-        or _openrouter_json(prompt, temperature)
-    )
+            if _ok(data, f"Gemini {model}"):
+                return data
+    for name, provider in (
+        ("Groq", _groq_json), ("Cloudflare", _cloudflare_json), ("OpenRouter", _openrouter_json),
+    ):
+        data = provider(prompt, temperature)
+        if _ok(data, name):
+            return data
+    return None
 
 
 _DEVELOPMENT_ADDENDUM = """
