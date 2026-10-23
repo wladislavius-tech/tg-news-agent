@@ -710,7 +710,15 @@ def _publish_item(state: dict, item: ukrnet.FeedItem, now: datetime,
         else:
             print("[без картинки — текстовий пост]")
     else:
-        message_id = tg.send_post(caption, **media)
+        media_fallback: dict = {}
+        message_id = tg.send_post(caption, **media, media_fallback=media_fallback)
+        if media_fallback.get("dropped"):
+            # Telegram не прийняв фото/відео — пост вийшов текстом. Те, чого
+            # читач не побачив, не заносимо ні в облік фотодублів, ні в
+            # відео-квоту дня.
+            log.warning("Новина вийшла без медіа, бо Telegram його відхилив: %r", item.title)
+            media = {}
+            real_image = None
         log.info("Опубліковано ✔: %r", item.title)
     if real_image:
         state_mod.remember_image_hash(state, real_image)

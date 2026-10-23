@@ -163,22 +163,33 @@ def _media_group(kind: str, blobs: list[bytes], caption: str) -> dict | list:
     )
 
 
-def send_post(
+def _send_text(caption: str) -> dict:
+    return _call(
+        "sendMessage",
+        data={
+            "chat_id": config.TELEGRAM_CHANNEL,
+            "text": caption,
+            "parse_mode": "HTML",
+            "link_preview_options": '{"is_disabled": true}',
+        },
+    )
+
+
+def _send_content(
     caption: str,
-    image: bytes | None = None,
-    video: bytes | None = None,
-    youtube_url: str = "",
-    album: list[bytes] | None = None,
-    video_album: list[bytes] | None = None,
-) -> int | None:
-    """Публікує пост, повертає message_id (для посилання на пост із дайджесту)."""
+    image: bytes | None,
+    video: bytes | None,
+    youtube_url: str,
+    album: list[bytes] | None,
+    video_album: list[bytes] | None,
+) -> dict | list:
     if video_album:
         # Добірка коротких відео однієї теми (media group з відео)
-        result = _media_group("video", video_album, caption)
-    elif album:
-        result = _media_group("photo", album, caption)
-    elif video:
-        result = _call(
+        return _media_group("video", video_album, caption)
+    if album:
+        return _media_group("photo", album, caption)
+    if video:
+        return _call(
             "sendVideo",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -188,9 +199,9 @@ def send_post(
             },
             files={"video": ("news.mp4", video, "video/mp4")},
         )
-    elif youtube_url:
+    if youtube_url:
         # Текстовий пост з великим YouTube-прев'ю (вбудований плеєр)
-        result = _call(
+        return _call(
             "sendMessage",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -201,8 +212,8 @@ def send_post(
                 ),
             },
         )
-    elif image:
-        result = _call(
+    if image:
+        return _call(
             "sendPhoto",
             data={
                 "chat_id": config.TELEGRAM_CHANNEL,
@@ -211,16 +222,36 @@ def send_post(
             },
             files={"photo": ("news.jpg", image, "image/jpeg")},
         )
-    else:
-        result = _call(
-            "sendMessage",
-            data={
-                "chat_id": config.TELEGRAM_CHANNEL,
-                "text": caption,
-                "parse_mode": "HTML",
-                "link_preview_options": '{"is_disabled": true}',
-            },
-        )
+    return _send_text(caption)
+
+
+def send_post(
+    caption: str,
+    image: bytes | None = None,
+    video: bytes | None = None,
+    youtube_url: str = "",
+    album: list[bytes] | None = None,
+    video_album: list[bytes] | None = None,
+    media_fallback: dict | None = None,
+) -> int | None:
+    """Публікує пост, повертає message_id (для посилання на пост із дайджесту).
+
+    media_fallback — якщо передано словник, то коли Telegram відхиляє саме
+    МЕДІА (400 Bad Request: IMAGE_PROCESS_FAILED, PHOTO_INVALID_DIMENSIONS
+    тощо), новина виходить текстом, а не губиться разом з упалим запуском;
+    у словник пишеться {"dropped": True, "reason": ...}, щоб викликач не
+    рахував фото/відео, якого читач не побачив. Без словника помилка
+    піднімається як раніше (рубрики з картками: ранок, дайджест)."""
+    has_media = bool(video_album or album or video or (image and not youtube_url))
+    try:
+        result = _send_content(caption, image, video, youtube_url, album, video_album)
+    except RuntimeError as exc:
+        if media_fallback is None or not has_media or "Bad Request" not in str(exc):
+            raise
+        log.warning("Telegram не прийняв медіа — публікую текстом (%s)", exc)
+        media_fallback["dropped"] = True
+        media_fallback["reason"] = str(exc)
+        result = _send_text(caption)
     message_id = _first_message_id(result)
     _seed_reaction(message_id)
     return message_id
