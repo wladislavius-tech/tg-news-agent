@@ -18,7 +18,7 @@ from itertools import zip_longest
 from zoneinfo import ZoneInfo
 
 from . import (
-    config, cover, genimage, llm, modgov, source_logos,
+    config, cover, genimage, llm, modgov,
     state as state_mod, tg, tgtrends, ukrnet,
 )
 
@@ -131,7 +131,7 @@ def build_post(
 
     Пріоритет медіа: коротке відео (з t.me або статей) → фото/альбом →
     фото з каналів-конкурентів (та сама подія) → YouTube-прев'ю (лише коли
-    фото немає) → лого видання-джерела → текстовий пост.
+    фото немає) → текстовий пост.
     Лише РЕАЛЬНІ фото — AI-ілюстрація новини принципово не використовується
     (може вводити в оману, видаючи вигадану сцену за реальне зображення події).
 
@@ -179,8 +179,8 @@ def build_post(
                 caption = llm.compose_post(item, sources, meta, **src_kwargs)
                 return caption, {"video": video}
         # Фото самого поста (консенсус-новини) — «підходяща картинка»; якщо немає —
-        # шукаємо фото цієї ж події в інших каналах; якщо й цього немає — лого
-        # видання-джерела або текстовий пост (без AI-ілюстрації й стокових портретів).
+        # шукаємо фото цієї ж події в інших каналах; якщо й цього немає — текстовий
+        # пост (без AI-ілюстрації, стокових портретів і карток з лого видання).
         img_reasons: list[str] = []
         image = ukrnet.download_image(item.image_url) if item.image_url else None
         if image is None:
@@ -199,27 +199,14 @@ def build_post(
             else:
                 img_reasons.append("канали-конкуренти: тієї самої події з фото не знайдено")
         caption = llm.compose_post(item, sources, meta, **src_kwargs)
-        used_fallback_asset = image is None
-        if image is None:
-            log.info(
-                "Фото не знайдено для тренду %r: %s",
-                item.title, "; ".join(img_reasons) or "причина невідома",
-            )
-            # Лого видання-джерела — за РЕАЛЬНОЮ атрибуцією вже готового caption.
-            image = source_logos.pick(llm.attributed_source(caption))
-            log.info(
-                "Фолбек: %s",
-                "лого видання-джерела" if image else "не спрацював — публікую текстом",
-            )
         if image:
-            media = {"image": image}
-            if used_fallback_asset:
-                # logo-фото легітимно повторюються — перевірка дублів
-                # фото (_publish_item) не має їх чіпати.
-                media["_local_asset"] = True
-            return caption, media
-        # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
-        # повторює текстом той самий заголовок (не несе інформації).
+            return caption, {"image": image}
+        log.info(
+            "Фото не знайдено для тренду %r: %s — публікую текстом",
+            item.title, "; ".join(img_reasons) or "причина невідома",
+        )
+        # Без фото — краще текстовий пост, ніж штучна картка (лого видання,
+        # шаблонна обкладинка), що не несе інформації про подію.
         return caption, {}
 
     sources = ukrnet.fetch_cluster_sources(item.url)
@@ -383,35 +370,18 @@ def build_post(
 
     caption = llm.compose_post(item, sources, meta, **src_kwargs)
 
-    # 5) Реального фото немає — лого видання-джерела (BBC/Reuters тощо): caption
-    # уже готовий, бо логотип видання шукаємо за РЕАЛЬНОЮ атрибуцією поста, а не
-    # здогадом із сирих матеріалів (яких могло бути кілька, а AI обрала одне
-    # головне). Стокові портрети відомих людей не підставляємо.
-    used_fallback_asset = not images
+    # 5) Реального фото немає — публікуємо текстом: ні стокових портретів, ні
+    # карток з лого видання (штучні картинки не несуть інформації про подію).
     if not images:
         log.info(
-            "Фото не знайдено серед %d джерел для %r: %s",
+            "Фото не знайдено серед %d джерел для %r: %s — публікую текстом",
             len(sources), item.title, "; ".join(img_reasons) or "причина невідома",
         )
-        logo = source_logos.pick(llm.attributed_source(caption))
-        if logo:
-            images = [logo]
-            log.info("Фолбек: лого видання-джерела")
-        else:
-            log.info("Фолбек не спрацював (відоме видання не визначено) — публікую текстом")
+        return caption, {}
 
     if len(images) > 1:
         return caption, {"album": images, "_img_url": first_image_url}
-    if images:
-        media = {"image": images[0], "_img_url": first_image_url}
-        if used_fallback_asset:
-            # logo-фото легітимно повторюються — перевірка дублів
-            # фото (_publish_item) не має їх чіпати.
-            media["_local_asset"] = True
-        return caption, media
-    # Без фото — краще текстовий пост, ніж шаблонна картка, що просто
-    # повторює текстом той самий заголовок (не несе інформації).
-    return caption, {}
+    return caption, {"image": images[0], "_img_url": first_image_url}
 
 
 WAR_START = datetime(2022, 2, 24, tzinfo=KYIV).date()
