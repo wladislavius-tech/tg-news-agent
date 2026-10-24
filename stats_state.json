@@ -1,67 +1,10 @@
 {
  "tg_offset": 732687972,
  "tg_bot_id": 8466428396,
- "tg_reactions": {
-  "8210": {
-   "total": 3,
-   "top_emoji": "❤"
-  },
-  "8212": {
-   "total": 3,
-   "top_emoji": "❤"
-  },
-  "8228": {
-   "total": 2,
-   "top_emoji": "🤡"
-  },
-  "8227": {
-   "total": 2,
-   "top_emoji": "🤡"
-  },
-  "8224": {
-   "total": 2,
-   "top_emoji": "👍"
-  },
-  "8242": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "8209": {
-   "total": 2,
-   "top_emoji": "😢"
-  },
-  "8211": {
-   "total": 2,
-   "top_emoji": "👍"
-  },
-  "8257": {
-   "total": 2,
-   "top_emoji": "🔥"
-  },
-  "8259": {
-   "total": 1,
-   "top_emoji": "⚡"
-  },
-  "8260": {
-   "total": 2,
-   "top_emoji": "🙏"
-  },
-  "8263": {
-   "total": 2,
-   "top_emoji": "🔥"
-  },
-  "8266": {
-   "total": 2,
-   "top_emoji": "❤"
-  },
-  "8278": {
-   "total": 2,
-   "top_emoji": "🔥"
-  }
- },
- "tg_joined": 1,
+ "tg_reactions": {},
+ "tg_joined": 0,
  "tg_left": 0,
- "last_report_date": "2026-10-23",
+ "last_report_date": "2026-10-24",
  "history": [
   {
    "date": "2026-08-02",
@@ -5171,6 +5114,69 @@
      "posts": 3,
      "engagement": 13,
      "views": 2135
+    }
+   }
+  },
+  {
+   "date": "2026-10-24",
+   "tg_subscribers": 246,
+   "tg_joined": 1,
+   "tg_left": 0,
+   "tg_net": 1,
+   "tg_posts": 18,
+   "tg_views": 125,
+   "tg_reactions": 2,
+   "tg_by_category": {
+    "world": {
+     "posts": 2,
+     "engagement": 2,
+     "views": 18
+    },
+    "casualty": {
+     "posts": 4,
+     "engagement": 0,
+     "views": 34
+    },
+    "other": {
+     "posts": 7,
+     "engagement": 0,
+     "views": 38
+    },
+    "economy": {
+     "posts": 2,
+     "engagement": 0,
+     "views": 12
+    },
+    "strike": {
+     "posts": 3,
+     "engagement": 0,
+     "views": 23
+    }
+   },
+   "threads_followers": 294,
+   "threads_views": 33086,
+   "threads_likes": 1523,
+   "threads_posts": 25,
+   "threads_by_category": {
+    "other": {
+     "posts": 9,
+     "engagement": 10,
+     "views": 2481
+    },
+    "strike": {
+     "posts": 3,
+     "engagement": 149,
+     "views": 1686
+    },
+    "world": {
+     "posts": 5,
+     "engagement": 16,
+     "views": 2459
+    },
+    "casualty": {
+     "posts": 8,
+     "engagement": 76,
+     "views": 2804
     }
    }
   }
