@@ -187,6 +187,9 @@ jobs:
   # НЕ впливає на публікацію в канал і на Threads (без needs, continue-on-error,
   # окремий кеш стану).
   instagram:
+    # Вимкнено 2026-10-26 за рішенням користувача (проєкт Instagram зупинено).
+    # Щоб повернути — прибрати наступний рядок.
+    if: false
     runs-on: ubuntu-latest
     continue-on-error: true
     # Найповільніша job (ffmpeg + завантаження відео) — власна група й жорсткий
